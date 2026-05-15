@@ -216,3 +216,25 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project-specific
+.env
+.env.local
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Model weights
+*.gguf
+*.bin
+*.safetensors
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
