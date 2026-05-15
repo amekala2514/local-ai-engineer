@@ -1,0 +1,45 @@
+version: 1
+
+# Model role assignments. The Agent API reads this to decide which
+# model to use for a given task type.
+
+models:
+  general:
+    name: llama3.1:8b
+    role: conversation, finance queries, planning, explanations
+    context_window: 128000
+
+  code:
+    name: qwen2.5-coder:14b
+    role: code generation, refactoring, debugging, scaffolding
+    context_window: 32768
+
+  code_heavy:
+    name: deepseek-coder-v2:16b
+    role: optional - multi-file reasoning, complex debugging
+    context_window: 128000
+
+  embedding:
+    name: nomic-embed-text
+    role: vector embeddings for memory and knowledge retrieval
+    embedding_dimensions: 768
+
+# Routing rules. The Agent API uses these to pick a model based on
+# the request type. Phase 1 implements simple keyword routing;
+# Phase 4 may upgrade to LLM-based classification.
+
+routing:
+  default: general
+  rules:
+    - if: "task_type == 'code_generation'"
+      use: code
+    - if: "task_type == 'code_reasoning' and complexity == 'high'"
+      use: code_heavy
+    - if: "task_type == 'code'"
+      use: code
+
+# Fallback configuration for resource-constrained environments
+fallback:
+  low_vram:
+    code: qwen2.5-coder:7b
+    code_heavy: qwen2.5-coder:14b

@@ -1,0 +1,80 @@
+version: 1
+
+# Permission tiers based on action risk level
+
+risk_tiers:
+  low:
+    description: Auto-allowed, no approval needed
+    actions:
+      - read_file
+      - list_directory
+      - web_search
+      - web_fetch
+      - git_status
+      - git_diff
+      - memory_search
+      - memory_save
+
+  medium:
+    description: Requires per-batch approval
+    actions:
+      - create_file
+      - edit_file
+      - run_tests
+      - shell_safe_commands
+
+  high:
+    description: Requires explicit approval per action
+    actions:
+      - delete_file
+      - install_package
+      - shell_arbitrary
+      - git_push
+      - api_post
+      - access_secret
+
+# Workspace allowlist - only these paths are readable/writable
+workspace:
+  allowlist:
+    - /Users/ashish/Documents/local-ai-engineer
+    # Add more project paths as you onboard them
+
+  blocklist:
+    - "**/.env"
+    - "**/.env.*"
+    - "**/.ssh/**"
+    - "**/.aws/**"
+    - "**/.gcp/**"
+    - "**/id_rsa*"
+    - "**/id_ed25519*"
+    - "**/.git-credentials"
+    - "**/*.pem"
+    - "**/*.key"
+
+# Shell command policy
+shell:
+  always_blocked:
+    - "rm -rf /"
+    - "dd if="
+    - "mkfs"
+    - "chmod 777"
+    - "curl * | sh"
+    - "curl * | bash"
+    - "wget * | sh"
+    - "wget * | bash"
+
+  approval_required:
+    - "rm "
+    - "sudo "
+    - "git push"
+    - "git reset --hard"
+    - "docker rm"
+    - "npm publish"
+    - "pip install"
+
+# Tool execution limits
+limits:
+  max_tool_calls_per_turn: 10
+  max_recursive_depth: 5
+  max_file_read_bytes: 1048576
+  max_web_fetch_bytes: 524288
