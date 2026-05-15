@@ -36,7 +36,7 @@ risk_tiers:
 # Workspace allowlist - only these paths are readable/writable
 workspace:
   allowlist:
-    - /Users/ashish/Documents/local-ai-engineer
+    - /Users/ashish/Developer/local-ai-engineer
     # Add more project paths as you onboard them
 
   blocklist:
