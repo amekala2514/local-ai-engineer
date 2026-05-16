@@ -6,9 +6,16 @@
   <title>Sign in - Local AI Assistant</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="/styles.css">
+  <style>
+    /* Login page needs its own body styling since the app shell isn't used */
+    body {
+      overflow: auto;
+      height: auto;
+    }
+  </style>
 </head>
 <body>
-  <main class="container login-container">
+  <div class="login-container">
     <article>
       <hgroup>
         <h2>Local AI Assistant</h2>
@@ -32,7 +39,7 @@
         <p id="login-error" class="error-text" hidden></p>
       </form>
     </article>
-  </main>
+  </div>
 
   <script>
     const form = document.getElementById('login-form');

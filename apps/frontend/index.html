@@ -8,41 +8,55 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <main class="container">
-    <header class="app-header">
-      <hgroup>
-        <h2>Local AI Assistant</h2>
-        <p id="status-line">Connecting…</p>
-      </hgroup>
-      <button id="logout-button" class="secondary outline">Sign out</button>
-    </header>
-
-    <section id="chat-window" aria-live="polite"></section>
-
-    <form id="chat-form">
-      <div class="controls">
-        <label for="model-picker">
-          Model
-          <select id="model-picker" name="model">
-            <option value="general">General (Llama)</option>
-            <option value="code">Code (Qwen)</option>
-            <option value="code_heavy">Code Heavy (DeepSeek)</option>
-          </select>
-        </label>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h3>Conversations</h3>
+        <button type="button" id="new-conversation" class="contrast">+ New</button>
       </div>
-      <textarea
-        id="message-input"
-        name="message"
-        placeholder="Type a message and press Cmd+Enter to send…"
-        rows="3"
-        required></textarea>
-      <div class="actions">
-        <button type="submit" id="send-button">Send</button>
-        <button type="button" id="stop-button" class="secondary" disabled>Stop</button>
-        <button type="button" id="new-conversation" class="contrast outline">New conversation</button>
+      <div id="conversation-list" class="conversation-list">
+        <p class="empty-list">Loading…</p>
       </div>
-    </form>
-  </main>
+      <div class="sidebar-footer">
+        <button type="button" id="logout-button" class="secondary outline">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="app-header">
+        <hgroup>
+          <h2 id="conversation-title">New conversation</h2>
+          <p id="status-line">Connecting…</p>
+        </hgroup>
+      </header>
+
+      <section id="chat-window" aria-live="polite"></section>
+
+      <form id="chat-form">
+        <div class="controls">
+          <label for="model-picker">
+            Model
+            <select id="model-picker" name="model">
+              <option value="auto" selected>Auto (recommended)</option>
+              <option value="general">General (Llama)</option>
+              <option value="code">Code (Qwen)</option>
+              <option value="code_heavy">Code Heavy (DeepSeek)</option>
+            </select>
+          </label>
+        </div>
+        <textarea
+          id="message-input"
+          name="message"
+          placeholder="Type a message and press Cmd+Enter to send…"
+          rows="3"
+          required></textarea>
+        <div class="actions">
+          <button type="submit" id="send-button">Send</button>
+          <button type="button" id="stop-button" class="secondary" disabled>Stop</button>
+        </div>
+      </form>
+    </main>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <script src="/app.js"></script>

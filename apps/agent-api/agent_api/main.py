@@ -1,7 +1,6 @@
 """Agent API entry point.
 
-Phase A Day 8: serves a static chat UI, supports cookie-based auth for
-the browser and bearer-token auth for CLI clients.
+Phase A Day 9: auto-routing with explanation, plus sidebar-aware endpoints.
 """
 
 import json
@@ -30,12 +29,7 @@ from agent_api.storage.factory import make_storage
 from agent_api.storage.interfaces import Storage
 
 
-# ---------- Constants ----------
-
 SESSION_COOKIE_NAME = "session"
-
-
-# ---------- Module state ----------
 
 _model_client: OllamaClient | None = None
 _storage: Storage | None = None
@@ -55,7 +49,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Local AI Engineering Assistant",
     description="Agent API for the local-ai-engineer project",
-    version="0.5.0",
+    version="0.6.0",
     lifespan=lifespan,
 )
 
@@ -67,12 +61,6 @@ def require_auth(
     authorization: Annotated[str | None, Header()] = None,
     session: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
 ) -> str:
-    """Accept either a bearer token (CLI) or a session cookie (browser).
-
-    Returns a string describing the auth mode used. Raises 401 if neither
-    method validates.
-    """
-    # Path 1: bearer token
     if authorization is not None:
         if not authorization.startswith("Bearer "):
             raise HTTPException(
@@ -82,13 +70,10 @@ def require_auth(
         if token != settings.agent_api_token:
             raise HTTPException(status_code=401, detail="Invalid token")
         return "bearer"
-
-    # Path 2: session cookie
     if session is not None:
         if session_store.get(session) is not None:
             return "session"
         raise HTTPException(status_code=401, detail="Invalid or expired session")
-
     raise HTTPException(
         status_code=401,
         detail="Authentication required (Authorization header or session cookie)",
@@ -116,7 +101,10 @@ class LoginRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(..., description="The user's message")
-    task_type: str = Field(default="general")
+    task_type: str = Field(
+        default="auto",
+        description="One of: auto, general, code, code_heavy",
+    )
     system_prompt: str | None = Field(default=None)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     conversation_id: str | None = Field(default=None)
@@ -126,6 +114,7 @@ class ChatReply(BaseModel):
     reply: str
     model_used: str
     task_type: str
+    routing_reason: str
     conversation_id: str
 
 
@@ -194,22 +183,15 @@ async def _build_message_history(
 
 @app.post("/api/auth/login")
 async def login(request: LoginRequest, response: Response) -> dict:
-    """Exchange a bearer token for a session cookie.
-
-    This is the browser-facing login endpoint. The token submitted here
-    must match settings.agent_api_token. On success, sets an HttpOnly
-    cookie and returns success metadata.
-    """
     if request.token != settings.agent_api_token:
         raise HTTPException(status_code=401, detail="Invalid token")
-
     new_session = session_store.create()
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=new_session.id,
         httponly=True,
         samesite="strict",
-        secure=False,  # Set True when serving over HTTPS in production
+        secure=False,
         max_age=int((new_session.expires_at - new_session.created_at).total_seconds()),
         path="/",
     )
@@ -221,7 +203,6 @@ async def logout(
     response: Response,
     session: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
 ) -> dict:
-    """Invalidate the current session and clear the cookie."""
     if session is not None:
         session_store.delete(session)
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
@@ -232,7 +213,6 @@ async def logout(
 async def me(
     auth_mode: Annotated[str, Depends(require_auth)],
 ) -> dict:
-    """Confirm the current request is authenticated. Used by the UI on load."""
     return {"authenticated": True, "auth_mode": auth_mode}
 
 
@@ -241,7 +221,6 @@ async def me(
 
 @app.get("/api/health")
 async def health() -> dict:
-    """Unauthenticated health check."""
     ollama_ok = False
     if _model_client is not None:
         ollama_ok = await _model_client.health_check()
@@ -295,11 +274,11 @@ async def chat(
     messages = await _build_message_history(
         storage, tenant_id, conversation_id, request.system_prompt, request.message
     )
-    model = pick_model(request.task_type)
+    decision = pick_model(request.task_type, request.message)
 
     try:
         response = await client.chat(
-            messages=messages, model=model, temperature=request.temperature
+            messages=messages, model=decision.model, temperature=request.temperature
         )
     except Exception as e:
         raise HTTPException(
@@ -319,7 +298,8 @@ async def chat(
     return ChatReply(
         reply=response.content,
         model_used=response.model,
-        task_type=request.task_type,
+        task_type=decision.task_type,
+        routing_reason=decision.reason,
         conversation_id=conversation_id,
     )
 
@@ -338,7 +318,7 @@ async def chat_stream(
     messages = await _build_message_history(
         storage, tenant_id, conversation_id, request.system_prompt, request.message
     )
-    model = pick_model(request.task_type)
+    decision = pick_model(request.task_type, request.message)
 
     await storage.messages.append(
         conversation_id=conversation_id, tenant_id=tenant_id,
@@ -346,12 +326,19 @@ async def chat_stream(
     )
 
     async def event_generator() -> AsyncIterator[str]:
-        yield f"data: {json.dumps({'conversation_id': conversation_id, 'model': model})}\n\n"
+        # First event carries routing info so the UI can show it immediately
+        yield f"data: {json.dumps({
+            'conversation_id': conversation_id,
+            'model': decision.model,
+            'task_type': decision.task_type,
+            'routing_reason': decision.reason,
+        })}\n\n"
+
         accumulated: list[str] = []
-        final_model = model
+        final_model = decision.model
         try:
             async for chunk in client.stream_chat(
-                messages=messages, model=model, temperature=request.temperature
+                messages=messages, model=decision.model, temperature=request.temperature
             ):
                 accumulated.append(chunk.content)
                 final_model = chunk.model
