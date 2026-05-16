@@ -1,0 +1,129 @@
+# Phase A evaluation questions.
+#
+# These test retrieval quality against the ingested documents:
+#   - CNCF Operator Whitepaper (PDF)
+#   - Kubernetes Pods documentation (markdown subset)
+#
+# Use on Day 10 with the search CLI to verify retrieval works.
+# Use on Day 13 with the eval harness for automated scoring.
+#
+# Status legend (filled in by the harness on Day 13):
+#   hit       = relevant chunks in top-K
+#   near-miss = right topic, wrong specifics
+#   miss      = unrelated content retrieved
+
+version: 1
+collection: phase-a
+
+questions:
+  # ---------- CNCF Operator Whitepaper ----------
+
+  - id: q01
+    question: "What is the definition of an operator according to the CNCF whitepaper?"
+    expected_source: Operator-WhitePaper
+    expected_keywords: [operator, definition, Kubernetes, controller]
+    category: factual
+
+  - id: q02
+    question: "What are the capability levels defined for operators?"
+    expected_source: Operator-WhitePaper
+    expected_keywords: [capability, levels]
+    category: factual
+
+  - id: q03
+    question: "What's the difference between a Kubernetes controller and an operator?"
+    expected_source: Operator-WhitePaper
+    expected_keywords: [controller, operator, difference]
+    category: factual
+
+  - id: q04
+    question: "What security risks does the whitepaper identify for operators?"
+    expected_source: Operator-WhitePaper
+    expected_keywords: [security, risks, RBAC, privileges]
+    category: factual
+
+  - id: q05
+    question: "What operator frameworks does the whitepaper mention?"
+    expected_source: Operator-WhitePaper
+    expected_keywords: [framework, SDK]
+    category: factual
+
+  - id: q06
+    question: "When should you use the operator pattern vs. plain Kubernetes resources?"
+    expected_source: Operator-WhitePaper
+    expected_keywords: [pattern, primitives, state, automation]
+    category: conceptual
+
+  - id: q07
+    question: "What are the best practices for observability in operators?"
+    expected_source: Operator-WhitePaper
+    expected_keywords: [observability, metrics, logging]
+    category: conceptual
+
+  - id: q08
+    question: "How should operators handle backup and recovery?"
+    expected_source: Operator-WhitePaper
+    expected_keywords: [backup, recovery, restore]
+    category: conceptual
+
+  - id: q09
+    question: "What does the whitepaper say about using operators outside of Kubernetes?"
+    expected_source: Operator-WhitePaper
+    expected_keywords: [outside, beyond, "wider context", "other platforms"]
+    category: boundary
+
+  # ---------- Kubernetes Pods documentation ----------
+
+  - id: q10
+    question: "What is the difference between an init container and a sidecar container?"
+    expected_source: init-containers.md
+    expected_keywords: [init, sidecar, completion, lifecycle]
+    category: factual
+
+  - id: q11
+    question: "What QoS classes does Kubernetes assign to pods, and how is each one determined?"
+    expected_source: pod-qos.md
+    expected_keywords: [Guaranteed, Burstable, BestEffort]
+    category: factual
+
+  - id: q12
+    question: "What probe types are supported on init containers?"
+    expected_source: init-containers.md
+    expected_keywords: [probe, readinessProbe, livenessProbe, startupProbe]
+    category: factual
+
+  - id: q13
+    question: "What's the default restartPolicy for a pod's containers?"
+    expected_source: pod-lifecycle.md
+    expected_keywords: [restartPolicy, Always]
+    category: factual
+
+  - id: q14
+    question: "Under memory pressure, in what order does Kubernetes evict pods?"
+    expected_source: pod-qos.md
+    expected_keywords: [evict, BestEffort, Burstable, Guaranteed, order]
+    category: factual
+
+  - id: q15
+    question: "How do init containers and sidecar containers differ in terms of their lifecycle and restart behavior?"
+    expected_source: init-containers.md
+    expected_keywords: [restart, lifecycle, completion, "run to completion"]
+    category: conceptual
+
+  - id: q16
+    question: "What happens to a Guaranteed pod when the node it's running on faces resource pressure?"
+    expected_source: pod-qos.md
+    expected_keywords: [Guaranteed, eviction, "least likely", limits]
+    category: conceptual
+
+  - id: q17
+    question: "What are the three Pod Security Standards profiles and what does each restrict?"
+    expected_source: pod-security-standards.md
+    expected_keywords: [Privileged, Baseline, Restricted, profile]
+    category: factual
+
+  - id: q18
+    question: "Can a single pod use both init containers and ephemeral containers?"
+    expected_source: ephemeral-containers.md
+    expected_keywords: [init, ephemeral, container, pod]
+    category: boundary
