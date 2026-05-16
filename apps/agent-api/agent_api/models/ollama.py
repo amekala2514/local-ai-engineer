@@ -1,29 +1,49 @@
-"""Ollama model client.
+"""Ollama model client - supports both non-streaming and streaming chat."""
 
-Talks to a local (or remote) Ollama instance via its HTTP API.
-"""
+import json
+from collections.abc import AsyncIterator
 
 import httpx
 
-from agent_api.models.base import ChatMessage, ChatResponse, ModelClient
+from agent_api.models.base import (
+    ChatChunk,
+    ChatMessage,
+    ChatResponse,
+    ModelClient,
+)
 
 
 class OllamaClient(ModelClient):
     """Model client backed by an Ollama server."""
 
-    def __init__(self, host: str, timeout: float = 120.0) -> None:
+    def __init__(self, host: str, timeout: float = 300.0) -> None:
         """Initialize the client.
 
         Args:
-            host: Base URL of the Ollama server (e.g., http://localhost:11434).
-            timeout: Per-request timeout in seconds. Generous default because
-                local model inference can take a while.
+            host: Base URL of the Ollama server.
+            timeout: Per-request timeout in seconds. Generous default
+                because streamed responses may take a while overall.
         """
         self._host = host.rstrip("/")
-        self._client = httpx.AsyncClient(
-            base_url=self._host,
-            timeout=timeout,
-        )
+        self._client = httpx.AsyncClient(base_url=self._host, timeout=timeout)
+
+    def _build_payload(
+        self,
+        messages: list[ChatMessage],
+        model: str,
+        temperature: float,
+        max_tokens: int | None,
+        stream: bool,
+    ) -> dict:
+        payload: dict = {
+            "model": model,
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "stream": stream,
+            "options": {"temperature": temperature},
+        }
+        if max_tokens is not None:
+            payload["options"]["num_predict"] = max_tokens
+        return payload
 
     async def chat(
         self,
@@ -32,30 +52,50 @@ class OllamaClient(ModelClient):
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> ChatResponse:
-        """Send a chat request to Ollama and return the response."""
-        payload: dict = {
-            "model": model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "stream": False,
-            "options": {
-                "temperature": temperature,
-            },
-        }
-        if max_tokens is not None:
-            payload["options"]["num_predict"] = max_tokens
-
+        """Non-streaming chat."""
+        payload = self._build_payload(messages, model, temperature, max_tokens, stream=False)
         response = await self._client.post("/api/chat", json=payload)
         response.raise_for_status()
         data = response.json()
-
         return ChatResponse(
             content=data["message"]["content"],
             model=data.get("model", model),
             finish_reason=data.get("done_reason"),
         )
 
+    async def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[ChatChunk]:
+        """Stream chat completion chunks as they arrive from Ollama.
+
+        Ollama's streaming format is newline-delimited JSON: each line is
+        a JSON object representing one chunk.
+        """
+        payload = self._build_payload(messages, model, temperature, max_tokens, stream=True)
+        async with self._client.stream("POST", "/api/chat", json=payload) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                content = data.get("message", {}).get("content", "")
+                done = bool(data.get("done", False))
+                yield ChatChunk(
+                    content=content,
+                    model=data.get("model", model),
+                    done=done,
+                    finish_reason=data.get("done_reason") if done else None,
+                )
+
     async def health_check(self) -> bool:
-        """Return True if Ollama responds to a basic request."""
         try:
             response = await self._client.get("/api/tags")
             return response.status_code == 200
@@ -63,5 +103,4 @@ class OllamaClient(ModelClient):
             return False
 
     async def close(self) -> None:
-        """Close the underlying HTTP client."""
         await self._client.aclose()

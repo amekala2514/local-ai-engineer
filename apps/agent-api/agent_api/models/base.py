@@ -1,11 +1,7 @@
-"""Abstract base class for model clients.
-
-All concrete model backends (Ollama, vLLM, Bedrock, Vertex, etc.) inherit
-from ModelClient and implement its methods. This is the single seam
-that lets the rest of the application stay model-agnostic.
-"""
+"""Abstract base class for model clients."""
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 
@@ -19,10 +15,20 @@ class ChatMessage:
 
 @dataclass
 class ChatResponse:
-    """Response from a model client."""
+    """Response from a non-streaming chat request."""
 
     content: str
     model: str
+    finish_reason: str | None = None
+
+
+@dataclass
+class ChatChunk:
+    """A single chunk from a streaming chat request."""
+
+    content: str  # The new text in this chunk (may be empty on the final chunk)
+    model: str
+    done: bool = False
     finish_reason: str | None = None
 
 
@@ -37,29 +43,26 @@ class ModelClient(ABC):
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> ChatResponse:
-        """Send a chat completion request and get a single response.
+        """Non-streaming chat completion."""
+        raise NotImplementedError
 
-        Args:
-            messages: Conversation history, oldest first.
-            model: Name of the model to use (e.g., "llama3.1:8b").
-            temperature: Sampling temperature, 0.0 to 2.0.
-            max_tokens: Maximum tokens to generate, or None for the model default.
-
-        Returns:
-            A ChatResponse with the model's reply.
-        """
+    @abstractmethod
+    def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[ChatChunk]:
+        """Streaming chat completion - yields ChatChunks as they arrive."""
         raise NotImplementedError
 
     @abstractmethod
     async def health_check(self) -> bool:
-        """Return True if the backend is reachable and ready.
-
-        Used by the API's health endpoint and by routing logic that needs
-        to know whether a backend is available.
-        """
+        """Return True if the backend is reachable and ready."""
         raise NotImplementedError
 
     @abstractmethod
     async def close(self) -> None:
-        """Release any held resources (HTTP connections, etc.)."""
+        """Release any held resources."""
         raise NotImplementedError

@@ -1,12 +1,15 @@
 """Agent API entry point.
 
-Phase 1, Day 5: minimal chat endpoint that routes to Ollama.
+Phase 1, Day 6: streaming chat endpoint added.
 """
 
+import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from agent_api.models.base import ChatMessage
@@ -15,13 +18,11 @@ from agent_api.models.router import pick_model
 from agent_api.settings import settings
 
 
-# Single shared model client. Created on app startup, closed on shutdown.
 _model_client: OllamaClient | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage the lifecycle of shared resources."""
     global _model_client
     _model_client = OllamaClient(host=settings.ollama_host)
     yield
@@ -31,7 +32,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Local AI Engineering Assistant",
     description="Agent API for the local-ai-engineer project",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -39,7 +40,6 @@ app = FastAPI(
 def require_bearer_token(
     authorization: Annotated[str | None, Header()] = None,
 ) -> str:
-    """FastAPI dependency enforcing bearer-token auth."""
     if authorization is None:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
     if not authorization.startswith("Bearer "):
@@ -53,51 +53,29 @@ def require_bearer_token(
 
 
 def get_model_client() -> OllamaClient:
-    """FastAPI dependency providing the shared model client."""
     if _model_client is None:
         raise HTTPException(status_code=503, detail="Model client not initialized")
     return _model_client
 
 
-# ---------- Request and response schemas ----------
-
-
 class ChatRequest(BaseModel):
-    """Body of a /chat request."""
-
     message: str = Field(..., description="The user's message")
-    task_type: str = Field(
-        default="general",
-        description="One of: general, code, code_heavy",
-    )
-    system_prompt: str | None = Field(
-        default=None,
-        description="Optional system message to prepend",
-    )
+    task_type: str = Field(default="general")
+    system_prompt: str | None = Field(default=None)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 
 
 class ChatReply(BaseModel):
-    """Response body for /chat."""
-
     reply: str
     model_used: str
     task_type: str
 
 
-# ---------- Endpoints ----------
-
-
 @app.get("/health")
 async def health() -> dict:
-    """Unauthenticated health check.
-
-    Reports both the API's own health and the model backend's health.
-    """
     ollama_ok = False
     if _model_client is not None:
         ollama_ok = await _model_client.health_check()
-
     return {
         "status": "ok",
         "service": "agent-api",
@@ -111,7 +89,6 @@ async def health() -> dict:
 async def whoami(
     _: Annotated[str, Depends(require_bearer_token)],
 ) -> dict:
-    """Authenticated endpoint that confirms config is loaded correctly."""
     return {
         "tenant_id": settings.tenant_id,
         "storage_backend": settings.storage_backend,
@@ -129,12 +106,8 @@ async def chat(
     _: Annotated[str, Depends(require_bearer_token)],
     client: Annotated[OllamaClient, Depends(get_model_client)],
 ) -> ChatReply:
-    """Send a message to the assistant and get a reply.
-
-    Routes to the appropriate model based on task_type.
-    """
+    """Non-streaming chat. Waits for the full response, then returns it."""
     model = pick_model(request.task_type)
-
     messages: list[ChatMessage] = []
     if request.system_prompt:
         messages.append(ChatMessage(role="system", content=request.system_prompt))
@@ -156,4 +129,53 @@ async def chat(
         reply=response.content,
         model_used=response.model,
         task_type=request.task_type,
+    )
+
+
+@app.post("/chat/stream")
+async def chat_stream(
+    request: ChatRequest,
+    _: Annotated[str, Depends(require_bearer_token)],
+    client: Annotated[OllamaClient, Depends(get_model_client)],
+) -> StreamingResponse:
+    """Streaming chat using Server-Sent Events.
+
+    Each event is a JSON object on a single line, prefixed with 'data: '.
+    The stream ends with 'data: [DONE]'.
+    """
+    model = pick_model(request.task_type)
+    messages: list[ChatMessage] = []
+    if request.system_prompt:
+        messages.append(ChatMessage(role="system", content=request.system_prompt))
+    messages.append(ChatMessage(role="user", content=request.message))
+
+    async def event_generator() -> AsyncIterator[str]:
+        try:
+            async for chunk in client.stream_chat(
+                messages=messages,
+                model=model,
+                temperature=request.temperature,
+            ):
+                payload = {
+                    "content": chunk.content,
+                    "model": chunk.model,
+                    "done": chunk.done,
+                }
+                if chunk.finish_reason:
+                    payload["finish_reason"] = chunk.finish_reason
+                yield f"data: {json.dumps(payload)}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            error_payload = {"error": f"{type(e).__name__}: {e}"}
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering if behind a proxy
+        },
     )
