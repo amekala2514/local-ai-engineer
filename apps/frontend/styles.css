@@ -1,0 +1,132 @@
+:root {
+  --message-radius: 0.6rem;
+}
+
+main.container {
+  max-width: 900px;
+  padding-top: 1.5rem;
+  padding-bottom: 1rem;
+}
+
+.login-container {
+  max-width: 480px;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.app-header button {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
+}
+
+#status-line {
+  font-size: 0.85rem;
+  color: var(--pico-muted-color);
+}
+
+#status-line.ok::before {
+  content: "● ";
+  color: #2e8b57;
+}
+
+#status-line.error::before {
+  content: "● ";
+  color: #c0392b;
+}
+
+#chat-window {
+  min-height: 50vh;
+  max-height: 65vh;
+  overflow-y: auto;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--message-radius);
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background: var(--pico-card-background-color);
+}
+
+.message {
+  margin-bottom: 1.25rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--message-radius);
+}
+
+.message.user {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+  margin-left: 2rem;
+}
+
+.message.assistant {
+  background: transparent;
+  border: 1px solid var(--pico-muted-border-color);
+  margin-right: 2rem;
+}
+
+.message.error {
+  background: rgba(192, 57, 43, 0.1);
+  border: 1px solid #c0392b;
+  color: #c0392b;
+}
+
+.message-meta {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  margin-top: 0.5rem;
+}
+
+.message pre {
+  background: var(--pico-code-background-color);
+  padding: 0.75rem;
+  border-radius: 0.3rem;
+  overflow-x: auto;
+}
+
+.message code {
+  font-size: 0.9em;
+}
+
+.controls {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  margin-bottom: 0.5rem;
+}
+
+.controls label {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.controls select {
+  min-width: 200px;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.actions button {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--pico-muted-color);
+}
+
+.error-text {
+  color: #c0392b;
+  margin-top: 0.5rem;
+}

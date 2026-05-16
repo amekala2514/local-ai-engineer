@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in - Local AI Assistant</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="container login-container">
+    <article>
+      <hgroup>
+        <h2>Local AI Assistant</h2>
+        <p>Sign in to continue</p>
+      </hgroup>
+
+      <form id="login-form">
+        <label for="token-input">
+          Bearer token
+          <input
+            type="password"
+            id="token-input"
+            name="token"
+            placeholder="Paste your token"
+            autocomplete="current-password"
+            required>
+          <small>From your <code>.env</code> file. Stored as a session cookie, not in browser storage.</small>
+        </label>
+
+        <button type="submit" id="login-button">Sign in</button>
+        <p id="login-error" class="error-text" hidden></p>
+      </form>
+    </article>
+  </main>
+
+  <script>
+    const form = document.getElementById('login-form');
+    const tokenInput = document.getElementById('token-input');
+    const loginButton = document.getElementById('login-button');
+    const errorEl = document.getElementById('login-error');
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      errorEl.hidden = true;
+      loginButton.disabled = true;
+      loginButton.setAttribute('aria-busy', 'true');
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ token: tokenInput.value.trim() }),
+        });
+
+        if (res.ok) {
+          window.location.href = '/';
+          return;
+        }
+
+        const data = await res.json().catch(() => ({}));
+        errorEl.textContent = data.detail || `Sign-in failed (HTTP ${res.status})`;
+        errorEl.hidden = false;
+      } catch (e) {
+        errorEl.textContent = `Network error: ${e.message}`;
+        errorEl.hidden = false;
+      } finally {
+        loginButton.disabled = false;
+        loginButton.removeAttribute('aria-busy');
+      }
+    });
+
+    tokenInput.focus();
+  </script>
+</body>
+</html>

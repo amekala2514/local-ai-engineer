@@ -1,6 +1,7 @@
 """Agent API entry point.
 
-Phase 1, Day 7: persistent conversations with SQLite storage.
+Phase A Day 8: serves a static chat UI, supports cookie-based auth for
+the browser and bearer-token auth for CLI clients.
 """
 
 import json
@@ -8,17 +9,33 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import (
+    Cookie,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Response,
+)
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from agent_api.auth.session_store import session_store
 from agent_api.models.base import ChatMessage
 from agent_api.models.ollama import OllamaClient
 from agent_api.models.router import pick_model
-from agent_api.settings import settings
+from agent_api.settings import ENV_FILE, settings
 from agent_api.storage.factory import make_storage
 from agent_api.storage.interfaces import Storage
 
+
+# ---------- Constants ----------
+
+SESSION_COOKIE_NAME = "session"
+
+
+# ---------- Module state ----------
 
 _model_client: OllamaClient | None = None
 _storage: Storage | None = None
@@ -27,13 +44,10 @@ _storage: Storage | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _model_client, _storage
-
     _model_client = OllamaClient(host=settings.ollama_host)
     _storage = make_storage()
     await _storage.initialize()
-
     yield
-
     await _model_client.close()
     await _storage.close()
 
@@ -41,24 +55,44 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Local AI Engineering Assistant",
     description="Agent API for the local-ai-engineer project",
-    version="0.4.0",
+    version="0.5.0",
     lifespan=lifespan,
 )
 
 
-def require_bearer_token(
+# ---------- Auth ----------
+
+
+def require_auth(
     authorization: Annotated[str | None, Header()] = None,
+    session: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
 ) -> str:
-    if authorization is None:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401, detail="Authorization must use Bearer scheme"
-        )
-    token = authorization.removeprefix("Bearer ").strip()
-    if token != settings.agent_api_token:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return token
+    """Accept either a bearer token (CLI) or a session cookie (browser).
+
+    Returns a string describing the auth mode used. Raises 401 if neither
+    method validates.
+    """
+    # Path 1: bearer token
+    if authorization is not None:
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401, detail="Authorization must use Bearer scheme"
+            )
+        token = authorization.removeprefix("Bearer ").strip()
+        if token != settings.agent_api_token:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return "bearer"
+
+    # Path 2: session cookie
+    if session is not None:
+        if session_store.get(session) is not None:
+            return "session"
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+    raise HTTPException(
+        status_code=401,
+        detail="Authentication required (Authorization header or session cookie)",
+    )
 
 
 def get_model_client() -> OllamaClient:
@@ -76,16 +110,16 @@ def get_storage() -> Storage:
 # ---------- Schemas ----------
 
 
+class LoginRequest(BaseModel):
+    token: str = Field(..., description="The bearer token to authenticate with")
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., description="The user's message")
     task_type: str = Field(default="general")
     system_prompt: str | None = Field(default=None)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    conversation_id: str | None = Field(
-        default=None,
-        description="If provided, continues an existing conversation. "
-                    "If omitted, a new conversation is created.",
-    )
+    conversation_id: str | None = Field(default=None)
 
 
 class ChatReply(BaseModel):
@@ -110,6 +144,12 @@ class MessageItem(BaseModel):
     created_at: str
 
 
+class AvailableModels(BaseModel):
+    general: str
+    code: str
+    code_heavy: str
+
+
 # ---------- Helpers ----------
 
 
@@ -119,7 +159,6 @@ async def _resolve_or_create_conversation(
     conversation_id: str | None,
     first_message_preview: str,
 ) -> str:
-    """Return a valid conversation_id, creating a new one if needed."""
     if conversation_id is not None:
         existing = await storage.conversations.get(tenant_id, conversation_id)
         if existing is None:
@@ -128,7 +167,6 @@ async def _resolve_or_create_conversation(
                 detail=f"Conversation {conversation_id} not found",
             )
         return existing.id
-    # Use the first 60 chars of the user's message as a title
     title = first_message_preview.strip()[:60]
     new_conv = await storage.conversations.create(tenant_id, title=title)
     return new_conv.id
@@ -141,9 +179,7 @@ async def _build_message_history(
     system_prompt: str | None,
     new_user_message: str,
 ) -> list[ChatMessage]:
-    """Construct the full message list to send to the model."""
     history = await storage.messages.list_for_conversation(conversation_id, tenant_id)
-
     messages: list[ChatMessage] = []
     if system_prompt:
         messages.append(ChatMessage(role="system", content=system_prompt))
@@ -153,11 +189,59 @@ async def _build_message_history(
     return messages
 
 
-# ---------- Endpoints ----------
+# ---------- Auth endpoints ----------
 
 
-@app.get("/health")
+@app.post("/api/auth/login")
+async def login(request: LoginRequest, response: Response) -> dict:
+    """Exchange a bearer token for a session cookie.
+
+    This is the browser-facing login endpoint. The token submitted here
+    must match settings.agent_api_token. On success, sets an HttpOnly
+    cookie and returns success metadata.
+    """
+    if request.token != settings.agent_api_token:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    new_session = session_store.create()
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=new_session.id,
+        httponly=True,
+        samesite="strict",
+        secure=False,  # Set True when serving over HTTPS in production
+        max_age=int((new_session.expires_at - new_session.created_at).total_seconds()),
+        path="/",
+    )
+    return {"ok": True, "expires_at": new_session.expires_at.isoformat()}
+
+
+@app.post("/api/auth/logout")
+async def logout(
+    response: Response,
+    session: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
+) -> dict:
+    """Invalidate the current session and clear the cookie."""
+    if session is not None:
+        session_store.delete(session)
+    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+async def me(
+    auth_mode: Annotated[str, Depends(require_auth)],
+) -> dict:
+    """Confirm the current request is authenticated. Used by the UI on load."""
+    return {"authenticated": True, "auth_mode": auth_mode}
+
+
+# ---------- Core endpoints ----------
+
+
+@app.get("/api/health")
 async def health() -> dict:
+    """Unauthenticated health check."""
     ollama_ok = False
     if _model_client is not None:
         ollama_ok = await _model_client.health_check()
@@ -171,9 +255,9 @@ async def health() -> dict:
     }
 
 
-@app.get("/whoami")
+@app.get("/api/whoami")
 async def whoami(
-    _: Annotated[str, Depends(require_bearer_token)],
+    _: Annotated[str, Depends(require_auth)],
 ) -> dict:
     return {
         "tenant_id": settings.tenant_id,
@@ -186,10 +270,21 @@ async def whoami(
     }
 
 
-@app.post("/chat", response_model=ChatReply)
+@app.get("/api/models", response_model=AvailableModels)
+async def list_models(
+    _: Annotated[str, Depends(require_auth)],
+) -> AvailableModels:
+    return AvailableModels(
+        general=settings.model_general,
+        code=settings.model_code,
+        code_heavy=settings.model_code_heavy,
+    )
+
+
+@app.post("/api/chat", response_model=ChatReply)
 async def chat(
     request: ChatRequest,
-    _: Annotated[str, Depends(require_bearer_token)],
+    _: Annotated[str, Depends(require_auth)],
     client: Annotated[OllamaClient, Depends(get_model_client)],
     storage: Annotated[Storage, Depends(get_storage)],
 ) -> ChatReply:
@@ -197,19 +292,14 @@ async def chat(
     conversation_id = await _resolve_or_create_conversation(
         storage, tenant_id, request.conversation_id, request.message
     )
-
     messages = await _build_message_history(
-        storage, tenant_id, conversation_id,
-        request.system_prompt, request.message,
+        storage, tenant_id, conversation_id, request.system_prompt, request.message
     )
-
     model = pick_model(request.task_type)
 
     try:
         response = await client.chat(
-            messages=messages,
-            model=model,
-            temperature=request.temperature,
+            messages=messages, model=model, temperature=request.temperature
         )
     except Exception as e:
         raise HTTPException(
@@ -217,19 +307,13 @@ async def chat(
             detail=f"Model backend error: {type(e).__name__}: {e}",
         ) from e
 
-    # Persist both sides of the exchange
     await storage.messages.append(
-        conversation_id=conversation_id,
-        tenant_id=tenant_id,
-        role="user",
-        content=request.message,
+        conversation_id=conversation_id, tenant_id=tenant_id,
+        role="user", content=request.message,
     )
     await storage.messages.append(
-        conversation_id=conversation_id,
-        tenant_id=tenant_id,
-        role="assistant",
-        content=response.content,
-        model=response.model,
+        conversation_id=conversation_id, tenant_id=tenant_id,
+        role="assistant", content=response.content, model=response.model,
     )
 
     return ChatReply(
@@ -240,10 +324,10 @@ async def chat(
     )
 
 
-@app.post("/chat/stream")
+@app.post("/api/chat/stream")
 async def chat_stream(
     request: ChatRequest,
-    _: Annotated[str, Depends(require_bearer_token)],
+    _: Annotated[str, Depends(require_auth)],
     client: Annotated[OllamaClient, Depends(get_model_client)],
     storage: Annotated[Storage, Depends(get_storage)],
 ) -> StreamingResponse:
@@ -251,33 +335,23 @@ async def chat_stream(
     conversation_id = await _resolve_or_create_conversation(
         storage, tenant_id, request.conversation_id, request.message
     )
-
     messages = await _build_message_history(
-        storage, tenant_id, conversation_id,
-        request.system_prompt, request.message,
+        storage, tenant_id, conversation_id, request.system_prompt, request.message
     )
-
     model = pick_model(request.task_type)
 
-    # Persist user message before streaming starts
     await storage.messages.append(
-        conversation_id=conversation_id,
-        tenant_id=tenant_id,
-        role="user",
-        content=request.message,
+        conversation_id=conversation_id, tenant_id=tenant_id,
+        role="user", content=request.message,
     )
 
     async def event_generator() -> AsyncIterator[str]:
-        # Send the conversation_id first so the client knows it
-        yield f"data: {json.dumps({'conversation_id': conversation_id})}\n\n"
-
-        accumulated = []
+        yield f"data: {json.dumps({'conversation_id': conversation_id, 'model': model})}\n\n"
+        accumulated: list[str] = []
         final_model = model
         try:
             async for chunk in client.stream_chat(
-                messages=messages,
-                model=model,
-                temperature=request.temperature,
+                messages=messages, model=model, temperature=request.temperature
             ):
                 accumulated.append(chunk.content)
                 final_model = chunk.model
@@ -290,19 +364,15 @@ async def chat_stream(
                     payload["finish_reason"] = chunk.finish_reason
                 yield f"data: {json.dumps(payload)}\n\n"
 
-            # Persist assistant message after streaming completes
             full_reply = "".join(accumulated)
             await storage.messages.append(
-                conversation_id=conversation_id,
-                tenant_id=tenant_id,
-                role="assistant",
-                content=full_reply,
-                model=final_model,
+                conversation_id=conversation_id, tenant_id=tenant_id,
+                role="assistant", content=full_reply, model=final_model,
             )
             yield "data: [DONE]\n\n"
         except Exception as e:
-            error_payload = {"error": f"{type(e).__name__}: {e}"}
-            yield f"data: {json.dumps(error_payload)}\n\n"
+            err = {"error": f"{type(e).__name__}: {e}"}
+            yield f"data: {json.dumps(err)}\n\n"
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -316,17 +386,16 @@ async def chat_stream(
     )
 
 
-@app.get("/conversations", response_model=list[ConversationSummary])
+@app.get("/api/conversations", response_model=list[ConversationSummary])
 async def list_conversations(
-    _: Annotated[str, Depends(require_bearer_token)],
+    _: Annotated[str, Depends(require_auth)],
     storage: Annotated[Storage, Depends(get_storage)],
     limit: int = 50,
 ) -> list[ConversationSummary]:
     convs = await storage.conversations.list(settings.tenant_id, limit=limit)
     return [
         ConversationSummary(
-            id=c.id,
-            title=c.title,
+            id=c.id, title=c.title,
             created_at=c.created_at.isoformat(),
             updated_at=c.updated_at.isoformat(),
         )
@@ -335,12 +404,12 @@ async def list_conversations(
 
 
 @app.get(
-    "/conversations/{conversation_id}/messages",
+    "/api/conversations/{conversation_id}/messages",
     response_model=list[MessageItem],
 )
 async def list_messages(
     conversation_id: str,
-    _: Annotated[str, Depends(require_bearer_token)],
+    _: Annotated[str, Depends(require_auth)],
     storage: Annotated[Storage, Depends(get_storage)],
 ) -> list[MessageItem]:
     conv = await storage.conversations.get(settings.tenant_id, conversation_id)
@@ -351,11 +420,16 @@ async def list_messages(
     )
     return [
         MessageItem(
-            id=m.id,
-            role=m.role,
-            content=m.content,
-            model=m.model,
-            created_at=m.created_at.isoformat(),
+            id=m.id, role=m.role, content=m.content,
+            model=m.model, created_at=m.created_at.isoformat(),
         )
         for m in msgs
     ]
+
+
+# ---------- Static UI ----------
+
+if ENV_FILE is not None:
+    _frontend_dir = ENV_FILE.parent / "apps" / "frontend"
+    if _frontend_dir.exists():
+        app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="frontend")
