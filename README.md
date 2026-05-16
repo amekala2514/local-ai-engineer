@@ -9,7 +9,7 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 ## Architecture
 
 - **Model runtime:** Ollama (Llama 3.1 8B, Qwen2.5-Coder 14B, DeepSeek-Coder-V2 16B)
-- **Chat UI:** Open WebUI
+- **Chat UI:** Browser-based, served by the Agent API; cookie sessions for auth
 - **Agent backend:** FastAPI + LangGraph
 - **Vector store:** Qdrant (local) → Postgres with pgvector (cloud)
 - **Relational store:** SQLite (local) → Postgres (cloud)
@@ -18,36 +18,59 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 
 ## Status
 
+### Foundation
 - [x] Day 1: Ollama + Open WebUI running locally
 - [x] Day 2: Project skeleton committed
 - [x] Day 3: Configuration files and Docker Compose
-- [x] Day 4: Python setup, FastAPI
-- [x] Day 5: Ollama integration with model routing
+- [x] Day 4: Python project, Settings class, FastAPI scaffold with bearer auth
+- [x] Day 5: Ollama integration via ModelClient abstraction, /chat endpoint
+- [x] Day 6: Streaming chat via Server-Sent Events
+- [x] Day 7: SQLite-backed persistent conversations
 
-- [ ] Phase 1: Agent API foundation
-- [ ] Phase 2: Tools and safety
-- [ ] Phase 3: Memory and knowledge
-- [ ] Phase 4: Engineering workflows
-- [ ] Phase 5: Hardening
-- [ ] Phase 6: Cloud deployment
+### Phase A — Usable Assistant (in progress)
+- [x] Day 8: Browser chat UI with cookie sessions and streaming
+- [ ] Day 9: Auto-routing with reason, conversation sidebar
+- [ ] Day 10: Document ingestion pipeline with mixed file-type support
+- [ ] Day 11: RAG integration with citation display
+- [ ] Day 12: File upload through UI, collection management
+- [ ] Day 13: Eval harness with baseline + UI polish
+
+### Phase B — Smart Assistant (planned)
+- [ ] Retrieval improvements (reranking, hybrid search)
+- [ ] Cross-conversation memory
+- [ ] Web search tool
+- [ ] File generation (Markdown, PDF)
+
+### Phase C — Agentic Assistant (planned)
+- [ ] Approval and policy engine
+- [ ] File system tools
+- [ ] Git tools
+- [ ] Guarded shell execution
+- [ ] Repo onboarding
+- [ ] Code execution sandbox
 
 ## Getting started
 
 Prerequisites:
 - Docker Desktop
 - Ollama (with models pulled — see `configs/models.yaml`)
-- Python 3.11+
+- Python 3.12+
 
 Setup:
 \`\`\`
 cp .env.example .env
 # Edit .env with your local values
 docker compose up -d
+cd apps/agent-api
+uv sync
+.venv/bin/python -m uvicorn agent_api.main:app --reload --host 127.0.0.1 --port 8000
 \`\`\`
+
+Then visit \`http://localhost:8000/\` and sign in with the bearer token from your \`.env\`.
 
 ## Project structure
 
-See the directory layout in `/apps`, `/configs`, `/data`, `/evals`, `/infra`, and `/scripts`. Each has a specific role described in the build plan.
+See the directory layout in \`/apps\`, \`/configs\`, \`/data\`, \`/docs\`, \`/evals\`, \`/infra\`, and \`/scripts\`. The roadmap is documented in \`/docs/roadmap_index.md\` with detail per phase in the same directory.
 
 ## License
 
