@@ -29,7 +29,7 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 
 ### Phase A — Usable Assistant (in progress)
 - [x] Day 8: Browser chat UI with cookie sessions and streaming
-- [ ] Day 9: Auto-routing with reason, conversation sidebar
+- [x] Day 9: Auto-routing with reason, conversation sidebar
 - [ ] Day 10: Document ingestion pipeline with mixed file-type support
 - [ ] Day 11: RAG integration with citation display
 - [ ] Day 12: File upload through UI, collection management
