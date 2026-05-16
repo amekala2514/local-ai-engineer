@@ -21,6 +21,9 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Day 1: Ollama + Open WebUI running locally
 - [x] Day 2: Project skeleton committed
 - [x] Day 3: Configuration files and Docker Compose
+- [x] Day 4: Python setup, FastAPI
+- [x] Day 5: Ollama integration with model routing
+
 - [ ] Phase 1: Agent API foundation
 - [ ] Phase 2: Tools and safety
 - [ ] Phase 3: Memory and knowledge
