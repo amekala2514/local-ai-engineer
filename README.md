@@ -33,7 +33,7 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [ ] Day 10: Document ingestion pipeline with mixed file-type support
 - [x] Day 11: RAG integration with citation display
 - [x] Day 12: File upload through UI, collection management
-- [ ] Day 13: Eval harness with baseline + UI polish
+- [x] Day 13a: Eval harness + functional polish with baseline + UI polish
 
 ### Phase B — Smart Assistant (planned)
 - [ ] Retrieval improvements (reranking, hybrid search)
