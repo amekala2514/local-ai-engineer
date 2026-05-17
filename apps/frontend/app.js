@@ -1,7 +1,6 @@
-// Local AI Assistant - Day 13a UI
+// Local AI Assistant - Day 13b UI
 //
-// Adds: rename/delete conversations, regenerate, copy code, syntax highlighting,
-// smart auto-scroll, sources collapsed by default, better connection state.
+// Adds: theme toggle with persistence, SVG icon usage in dynamic UI.
 
 (() => {
   const state = {
@@ -13,8 +12,8 @@
     collections: [],
     activeView: 'chat',
     activeCollection: null,
-    autoScroll: true,  // when true, new content scrolls to bottom
-    openMenu: null,    // currently-open sidebar item menu (DOM element)
+    autoScroll: true,
+    openMenu: null,
   };
 
   const els = {
@@ -29,6 +28,7 @@
     newConversation: document.getElementById('new-conversation'),
     newCollection: document.getElementById('new-collection'),
     logoutButton: document.getElementById('logout-button'),
+    themeToggle: document.getElementById('theme-toggle'),
     statusLine: document.getElementById('status-line'),
     conversationList: document.getElementById('conversation-list'),
     collectionList: document.getElementById('collection-list'),
@@ -52,6 +52,26 @@
     collClose: document.getElementById('collection-close'),
     collDelete: document.getElementById('collection-delete'),
   };
+
+  // ---------- Theme ----------
+
+  function initTheme() {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'dark' || saved === 'light') {
+      document.documentElement.dataset.theme = saved;
+    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      document.documentElement.dataset.theme = 'dark';
+    } else {
+      document.documentElement.dataset.theme = 'light';
+    }
+  }
+
+  function toggleTheme() {
+    const current = document.documentElement.dataset.theme || 'light';
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('theme', next);
+  }
 
   // ---------- Utilities ----------
 
@@ -82,6 +102,10 @@
     return div.innerHTML;
   }
 
+  function svgIcon(id) {
+    return `<svg class="icon"><use href="#${id}"/></svg>`;
+  }
+
   function setStatus(text, kind) {
     els.statusLine.textContent = text;
     els.statusLine.className = kind || '';
@@ -109,7 +133,7 @@
   function renderEmptyState() {
     els.chatWindow.innerHTML = `
       <div class="empty-state">
-        <p>No messages yet. Type something below to start a conversation.</p>
+        <p>Ask anything to start a conversation.</p>
       </div>
     `;
   }
@@ -135,25 +159,21 @@
     }
   }
 
-  // When the user scrolls, decide whether auto-scroll should be re-enabled.
   function attachScrollListener() {
     els.chatWindow.addEventListener('scroll', () => {
       state.autoScroll = isNearBottom();
     });
   }
 
-  // ---------- Code blocks: highlight + copy button ----------
+  // ---------- Code blocks ----------
 
   function enhanceCodeBlocks(container) {
     const blocks = container.querySelectorAll('pre code');
     blocks.forEach((block) => {
-      // Skip if already enhanced
       if (block.dataset.enhanced === '1') return;
-      // Highlight
       if (window.hljs) {
         try { hljs.highlightElement(block); } catch (e) {}
       }
-      // Add copy button to the parent <pre>
       const pre = block.parentElement;
       if (pre && !pre.querySelector('.copy-code-btn')) {
         const btn = document.createElement('button');
@@ -180,16 +200,15 @@
     });
   }
 
-  // ---------- Sources panel (collapsed by default) ----------
+  // ---------- Sources panel ----------
 
   function buildSourcesPanel(sources) {
     if (!sources || sources.length === 0) return null;
     const panel = document.createElement('details');
     panel.className = 'sources-panel';
-    // Closed by default — no `open` attribute
 
     const summary = document.createElement('summary');
-    summary.textContent = `Sources (${sources.length})`;
+    summary.textContent = `Sources · ${sources.length}`;
     panel.appendChild(summary);
 
     sources.forEach((src, i) => {
@@ -198,12 +217,7 @@
 
       const header = document.createElement('div');
       header.className = 'source-item-header';
-      header.textContent = `[${i + 1}] ${src.source_file}`;
-
-      const score = document.createElement('span');
-      score.className = 'source-item-score';
-      score.textContent = `score ${src.score.toFixed(3)}`;
-      header.appendChild(score);
+      header.appendChild(document.createTextNode(`[${i + 1}] ${src.source_file}`));
 
       if (src.section_path && src.section_path.length) {
         const loc = document.createElement('span');
@@ -216,6 +230,11 @@
         loc.textContent = `page ${src.page_number}`;
         header.appendChild(loc);
       }
+
+      const score = document.createElement('span');
+      score.className = 'source-item-score';
+      score.textContent = src.score.toFixed(3);
+      header.appendChild(score);
 
       item.appendChild(header);
 
@@ -256,7 +275,6 @@
       if (panel) div.appendChild(panel);
     }
 
-    // Assistant messages get a Regenerate button (visible on hover)
     if (role === 'assistant' && !options.suppressActions) {
       const actions = document.createElement('div');
       actions.className = 'message-actions';
@@ -282,7 +300,6 @@
     if (state.isStreaming) return;
     if (!state.conversationId) return;
 
-    // Remove the assistant message from the DOM immediately
     messageDiv.remove();
     setStatus('Regenerating…', '');
     state.isStreaming = true;
@@ -351,7 +368,7 @@
     btn.type = 'button';
     btn.className = 'item-menu-btn';
     btn.title = 'More';
-    btn.textContent = '⋯';
+    btn.innerHTML = svgIcon('icon-more');
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const wasOpen = !menu.hidden;
@@ -465,7 +482,7 @@
         return;
       }
       const result = await res.json();
-      showUploadStatus(`Ingested ${result.filename}: ${result.chunks_stored} chunks`, 'success');
+      showUploadStatus(`Ingested ${result.filename} · ${result.chunks_stored} chunks`, 'success');
       await loadCollections();
       const col = state.collections.find(c => c.name === name);
       if (col) els.collViewInfo.textContent = `${col.points_count} chunks indexed`;
@@ -539,7 +556,7 @@
     }
   }
 
-  // ---------- Conversations: list + rename + delete ----------
+  // ---------- Conversations ----------
 
   async function loadConversationList() {
     try {
@@ -575,11 +592,11 @@
       const title = document.createElement('span');
       title.className = 'conversation-item-title';
       title.textContent = conv.title || '(untitled)';
-      title.title = conv.title || '';  // tooltip with full title
+      title.title = conv.title || '';
       if (conv.collection_id) {
         const marker = document.createElement('span');
         marker.className = 'collection-marker';
-        marker.textContent = ' 📎';
+        marker.innerHTML = svgIcon('icon-book');
         title.appendChild(marker);
       }
       item.appendChild(title);
@@ -676,11 +693,13 @@
       if (messages.length === 0) {
         renderEmptyState();
       } else {
-        for (const msg of messages) {
-          const meta = msg.model ? `via ${escapeHtml(msg.model)}` : null;
-          // History messages don't get a Regenerate button — only the live last one
-          const isLast = msg === messages[messages.length - 1];
-          addMessage(msg.role, msg.content, meta, null, { suppressActions: !isLast || msg.role !== 'assistant' });
+        for (let i = 0; i < messages.length; i++) {
+          const msg = messages[i];
+          const meta = msg.model ? `via <strong>${escapeHtml(msg.model)}</strong>` : null;
+          const isLast = i === messages.length - 1;
+          addMessage(msg.role, msg.content, meta, null, {
+            suppressActions: !isLast || msg.role !== 'assistant',
+          });
         }
       }
       setView('chat');
@@ -776,19 +795,18 @@
             const metaParts = [];
             if (modelUsed) metaParts.push(`via <strong>${escapeHtml(modelUsed)}</strong>`);
             if (routingReason && taskType === 'auto') {
-              metaParts.push(`<span class="routing-reason">(${escapeHtml(routingReason)})</span>`);
+              metaParts.push(`<span class="routing-reason">${escapeHtml(routingReason)}</span>`);
             }
             if (metaParts.length) {
               const metaDiv = document.createElement('div');
               metaDiv.className = 'message-meta';
-              metaDiv.innerHTML = metaParts.join(' ');
+              metaDiv.innerHTML = metaParts.join(' · ');
               messageDiv.appendChild(metaDiv);
             }
             if (sources && sources.length) {
               const panel = buildSourcesPanel(sources);
               if (panel) messageDiv.appendChild(panel);
             }
-            // Add the Regenerate button now that streaming is complete
             const actions = document.createElement('div');
             actions.className = 'message-actions';
             const regen = document.createElement('button');
@@ -833,7 +851,7 @@
     }
   }
 
-  // ---------- Form handlers ----------
+  // ---------- Handlers ----------
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -860,7 +878,7 @@
       else {
         console.error(e);
         addMessage('error', `**Error:** ${e.message}`, null, null);
-        setStatus('Error - see message above', 'error');
+        setStatus('Error', 'error');
       }
     } finally {
       state.isStreaming = false;
@@ -928,14 +946,15 @@
     try {
       const res = await fetch('/api/health');
       const data = await res.json();
-      if (data.ollama_reachable) setStatus(`Connected (v${data.version})`, 'ok');
-      else setStatus('Ollama unreachable — check Ollama is running', 'error');
+      if (data.ollama_reachable) setStatus(`Connected · v${data.version}`, 'ok');
+      else setStatus('Ollama unreachable', 'error');
     } catch (e) {
       setStatus('Cannot reach Agent API', 'error');
     }
   }
 
   async function init() {
+    initTheme();
     const ok = await checkAuth();
     if (!ok) return;
 
@@ -950,9 +969,9 @@
     els.collClose.addEventListener('click', closeCollectionView);
     els.collDelete.addEventListener('click', deleteActiveCollection);
     els.logoutButton.addEventListener('click', handleLogout);
+    els.themeToggle.addEventListener('click', toggleTheme);
     els.messageInput.addEventListener('keydown', handleKeyDown);
 
-    // Click anywhere else to close an open menu
     document.addEventListener('click', () => closeOpenMenu());
 
     wireUploadArea();

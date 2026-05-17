@@ -1,21 +1,68 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Local AI Assistant</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lora:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css">
   <link rel="stylesheet" href="/styles.css">
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script>
 </head>
 <body>
+  <!-- SVG icon sprite -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="icon-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </symbol>
+      <symbol id="icon-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+      </symbol>
+      <symbol id="icon-more" viewBox="0 0 24 24" fill="currentColor">
+        <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
+      </symbol>
+      <symbol id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="4"/>
+        <line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/>
+        <line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/>
+        <line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/>
+        <line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/>
+      </symbol>
+      <symbol id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </symbol>
+      <symbol id="icon-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+      </symbol>
+      <symbol id="icon-stop" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="6" y="6" width="12" height="12" rx="1.5"/>
+      </symbol>
+      <symbol id="icon-paperclip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+      </symbol>
+      <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+        <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+      </symbol>
+    </defs>
+  </svg>
+
   <div class="app">
     <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-mark">◐</span>
+        <span class="brand-text">Local AI</span>
+      </div>
+
       <div class="sidebar-section">
         <div class="sidebar-header">
-          <h3>Knowledge</h3>
-          <button type="button" id="new-collection" class="contrast outline" title="New collection">+</button>
+          <span class="sidebar-label">Knowledge</span>
+          <button type="button" id="new-collection" class="icon-btn" title="New collection" aria-label="New collection">
+            <svg class="icon"><use href="#icon-plus"/></svg>
+          </button>
         </div>
         <div id="collection-list" class="collection-list">
           <p class="empty-list">Loading…</p>
@@ -24,8 +71,10 @@
 
       <div class="sidebar-section sidebar-section-flex">
         <div class="sidebar-header">
-          <h3>Conversations</h3>
-          <button type="button" id="new-conversation" class="contrast">+ New</button>
+          <span class="sidebar-label">Conversations</span>
+          <button type="button" id="new-conversation" class="icon-btn" title="New conversation" aria-label="New conversation">
+            <svg class="icon"><use href="#icon-plus"/></svg>
+          </button>
         </div>
         <div id="conversation-list" class="conversation-list">
           <p class="empty-list">Loading…</p>
@@ -33,59 +82,71 @@
       </div>
 
       <div class="sidebar-footer">
-        <button type="button" id="logout-button" class="secondary outline">Sign out</button>
+        <button type="button" id="theme-toggle" class="icon-btn theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+          <svg class="icon icon-sun"><use href="#icon-sun"/></svg>
+          <svg class="icon icon-moon"><use href="#icon-moon"/></svg>
+        </button>
+        <button type="button" id="logout-button" class="text-btn">Sign out</button>
       </div>
     </aside>
 
     <main class="main">
       <header class="app-header">
-        <hgroup>
+        <div class="header-titles">
           <h2 id="conversation-title">New conversation</h2>
           <p id="status-line">Connecting…</p>
-        </hgroup>
+        </div>
         <div class="collection-badge" id="collection-badge" hidden>
-          📎 <span id="collection-badge-name"></span>
+          <svg class="icon"><use href="#icon-book"/></svg>
+          <span id="collection-badge-name"></span>
         </div>
       </header>
 
-      <!-- Chat view (default) -->
+      <!-- Chat view -->
       <section id="chat-view">
         <section id="chat-window" aria-live="polite"></section>
 
         <form id="chat-form">
-          <div class="controls">
-            <label for="model-picker">
-              Model
-              <select id="model-picker" name="model">
-                <option value="auto" selected>Auto (recommended)</option>
-                <option value="general">General (Llama)</option>
-                <option value="code">Code (Qwen)</option>
-                <option value="code_heavy">Code Heavy (DeepSeek)</option>
-              </select>
-            </label>
+          <div class="composer">
+            <textarea
+              id="message-input"
+              name="message"
+              placeholder="Message the assistant…"
+              rows="2"
+              required></textarea>
+            <div class="composer-row">
+              <label for="model-picker" class="model-picker-label">
+                <select id="model-picker" name="model">
+                  <option value="auto" selected>Auto</option>
+                  <option value="general">General · Llama</option>
+                  <option value="code">Code · Qwen</option>
+                  <option value="code_heavy">Code+ · DeepSeek</option>
+                </select>
+              </label>
+              <div class="composer-actions">
+                <button type="button" id="stop-button" class="icon-btn stop-btn" disabled title="Stop">
+                  <svg class="icon"><use href="#icon-stop"/></svg>
+                </button>
+                <button type="submit" id="send-button" class="icon-btn send-btn" title="Send (⌘↵)">
+                  <svg class="icon"><use href="#icon-send"/></svg>
+                </button>
+              </div>
+            </div>
           </div>
-          <textarea
-            id="message-input"
-            name="message"
-            placeholder="Type a message and press Cmd+Enter to send…"
-            rows="3"
-            required></textarea>
-          <div class="actions">
-            <button type="submit" id="send-button">Send</button>
-            <button type="button" id="stop-button" class="secondary" disabled>Stop</button>
-          </div>
+          <p class="composer-hint">⌘↵ to send · Shift+↵ for new line</p>
         </form>
       </section>
 
-      <!-- Collection view (shown when a collection is selected) -->
+      <!-- Collection view -->
       <section id="collection-view" hidden>
-        <article>
-          <header>
+        <div class="collection-view-inner">
+          <header class="collection-view-header">
             <h3 id="collection-view-name">Collection</h3>
             <p id="collection-view-info" class="muted">Loading…</p>
           </header>
 
           <div class="upload-area" id="upload-area">
+            <svg class="icon upload-icon"><use href="#icon-paperclip"/></svg>
             <p class="upload-hint">Drop a .pdf or .md file here, or click to browse</p>
             <input type="file" id="upload-input" accept=".pdf,.md" hidden>
           </div>
@@ -93,10 +154,13 @@
           <div id="upload-status" hidden></div>
 
           <footer class="collection-actions">
-            <button type="button" id="collection-close" class="secondary">Back to chat</button>
-            <button type="button" id="collection-delete" class="contrast outline">Delete collection</button>
+            <button type="button" id="collection-close" class="text-btn">← Back to chat</button>
+            <button type="button" id="collection-delete" class="text-btn destructive">
+              <svg class="icon"><use href="#icon-trash"/></svg>
+              Delete collection
+            </button>
           </footer>
-        </article>
+        </div>
       </section>
     </main>
   </div>
@@ -112,8 +176,8 @@
       </label>
       <p id="new-coll-error" class="error-text" hidden></p>
       <footer>
-        <button type="button" id="new-coll-cancel" class="secondary">Cancel</button>
-        <button type="button" id="new-coll-create">Create</button>
+        <button type="button" id="new-coll-cancel" class="text-btn">Cancel</button>
+        <button type="button" id="new-coll-create" class="primary-btn">Create</button>
       </footer>
     </article>
   </dialog>
@@ -123,15 +187,15 @@
     <article>
       <header><h3>New conversation</h3></header>
       <label for="new-conv-collection">
-        Attach a knowledge collection (optional)
+        Attach knowledge (optional)
         <select id="new-conv-collection">
           <option value="">None — plain chat</option>
         </select>
-        <small>RAG is used automatically when a collection is attached.</small>
+        <small>Replies will cite sources when knowledge is attached.</small>
       </label>
       <footer>
-        <button type="button" id="new-conv-cancel" class="secondary">Cancel</button>
-        <button type="button" id="new-conv-create">Create</button>
+        <button type="button" id="new-conv-cancel" class="text-btn">Cancel</button>
+        <button type="button" id="new-conv-create" class="primary-btn">Create</button>
       </footer>
     </article>
   </dialog>
