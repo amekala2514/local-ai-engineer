@@ -27,19 +27,25 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Day 6: Streaming chat via Server-Sent Events
 - [x] Day 7: SQLite-backed persistent conversations
 
-### Phase A — Usable Assistant (in progress)
+### Phase A — Usable Assistant (complete)
 - [x] Day 8: Browser chat UI with cookie sessions and streaming
 - [x] Day 9: Auto-routing with reason, conversation sidebar
-- [ ] Day 10: Document ingestion pipeline with mixed file-type support
+- [x] Day 10: Document ingestion pipeline with mixed file-type support
 - [x] Day 11: RAG integration with citation display
 - [x] Day 12: File upload through UI, collection management
-- [x] Day 13a: Eval harness + functional polish with baseline + UI polish
+- [x] Day 13a: Eval harness + functional polish with baseline
+- [x] Day 13b: Visual design system (Claude-warm, light + dark themes)
 
-### Phase B — Smart Assistant (planned)
-- [ ] Retrieval improvements (reranking, hybrid search)
-- [ ] Cross-conversation memory
-- [ ] Web search tool
-- [ ] File generation (Markdown, PDF)
+### Phase B — Smart Assistant (in progress)
+- [x] Day 14: Reranking + input limits + login rate limiting
+- [ ] Day 15: Dedicated hardening (threat model, audit pass)
+- [ ] Days 16-17: User-provided URL fetching with prompt-injection defense
+- [ ] Days 18-19: Web search with prompt-injection defense
+- [ ] Days 20-22: Cross-conversation memory
+- [ ] Day 23: File generation (Markdown, PDF)
+- [ ] Days 24-25: Query rewriting / HyDE
+- [ ] Day 26: Hybrid search (vector + BM25)
+- [ ] Day 27: Eval re-baseline and reflection
 
 ### Phase C — Agentic Assistant (planned)
 - [ ] Approval and policy engine
