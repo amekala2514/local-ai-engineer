@@ -136,3 +136,13 @@ def collection_info(name: str) -> dict | None:
         "vectors_count": info.vectors_count,
         "status": info.status.value if hasattr(info.status, "value") else str(info.status),
     }
+
+
+def drop_collection(name: str) -> bool:
+    """Delete a collection. Returns True if it was deleted, False if absent."""
+    c = _client()
+    existing = {col.name for col in c.get_collections().collections}
+    if name not in existing:
+        return False
+    c.delete_collection(collection_name=name)
+    return True

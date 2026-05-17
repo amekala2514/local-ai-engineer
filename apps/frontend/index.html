@@ -10,13 +10,26 @@
 <body>
   <div class="app">
     <aside class="sidebar">
-      <div class="sidebar-header">
-        <h3>Conversations</h3>
-        <button type="button" id="new-conversation" class="contrast">+ New</button>
+      <div class="sidebar-section">
+        <div class="sidebar-header">
+          <h3>Knowledge</h3>
+          <button type="button" id="new-collection" class="contrast outline" title="New collection">+</button>
+        </div>
+        <div id="collection-list" class="collection-list">
+          <p class="empty-list">Loading…</p>
+        </div>
       </div>
-      <div id="conversation-list" class="conversation-list">
-        <p class="empty-list">Loading…</p>
+
+      <div class="sidebar-section sidebar-section-flex">
+        <div class="sidebar-header">
+          <h3>Conversations</h3>
+          <button type="button" id="new-conversation" class="contrast">+ New</button>
+        </div>
+        <div id="conversation-list" class="conversation-list">
+          <p class="empty-list">Loading…</p>
+        </div>
       </div>
+
       <div class="sidebar-footer">
         <button type="button" id="logout-button" class="secondary outline">Sign out</button>
       </div>
@@ -33,40 +46,80 @@
         </div>
       </header>
 
-      <section id="chat-window" aria-live="polite"></section>
+      <!-- Chat view (default) -->
+      <section id="chat-view">
+        <section id="chat-window" aria-live="polite"></section>
 
-      <form id="chat-form">
-        <div class="controls">
-          <label for="model-picker">
-            Model
-            <select id="model-picker" name="model">
-              <option value="auto" selected>Auto (recommended)</option>
-              <option value="general">General (Llama)</option>
-              <option value="code">Code (Qwen)</option>
-              <option value="code_heavy">Code Heavy (DeepSeek)</option>
-            </select>
-          </label>
-        </div>
-        <textarea
-          id="message-input"
-          name="message"
-          placeholder="Type a message and press Cmd+Enter to send…"
-          rows="3"
-          required></textarea>
-        <div class="actions">
-          <button type="submit" id="send-button">Send</button>
-          <button type="button" id="stop-button" class="secondary" disabled>Stop</button>
-        </div>
-      </form>
+        <form id="chat-form">
+          <div class="controls">
+            <label for="model-picker">
+              Model
+              <select id="model-picker" name="model">
+                <option value="auto" selected>Auto (recommended)</option>
+                <option value="general">General (Llama)</option>
+                <option value="code">Code (Qwen)</option>
+                <option value="code_heavy">Code Heavy (DeepSeek)</option>
+              </select>
+            </label>
+          </div>
+          <textarea
+            id="message-input"
+            name="message"
+            placeholder="Type a message and press Cmd+Enter to send…"
+            rows="3"
+            required></textarea>
+          <div class="actions">
+            <button type="submit" id="send-button">Send</button>
+            <button type="button" id="stop-button" class="secondary" disabled>Stop</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Collection view (shown when a collection is selected) -->
+      <section id="collection-view" hidden>
+        <article>
+          <header>
+            <h3 id="collection-view-name">Collection</h3>
+            <p id="collection-view-info" class="muted">Loading…</p>
+          </header>
+
+          <div class="upload-area" id="upload-area">
+            <p class="upload-hint">Drop a .pdf or .md file here, or click to browse</p>
+            <input type="file" id="upload-input" accept=".pdf,.md" hidden>
+          </div>
+
+          <div id="upload-status" hidden></div>
+
+          <footer class="collection-actions">
+            <button type="button" id="collection-close" class="secondary">Back to chat</button>
+            <button type="button" id="collection-delete" class="contrast outline">Delete collection</button>
+          </footer>
+        </article>
+      </section>
     </main>
   </div>
+
+  <!-- New collection modal -->
+  <dialog id="new-collection-dialog">
+    <article>
+      <header><h3>New collection</h3></header>
+      <label for="new-coll-name">
+        Name
+        <input type="text" id="new-coll-name" placeholder="e.g., kubernetes-docs" autocomplete="off">
+        <small>Letters, digits, dots, hyphens, underscores. No spaces.</small>
+      </label>
+      <p id="new-coll-error" class="error-text" hidden></p>
+      <footer>
+        <button type="button" id="new-coll-cancel" class="secondary">Cancel</button>
+        <button type="button" id="new-coll-create">Create</button>
+      </footer>
+    </article>
+  </dialog>
 
   <!-- New conversation modal -->
   <dialog id="new-conversation-dialog">
     <article>
-      <header>
-        <h3>New conversation</h3>
-      </header>
+      <header><h3>New conversation</h3></header>
       <label for="new-conv-collection">
         Attach a knowledge collection (optional)
         <select id="new-conv-collection">

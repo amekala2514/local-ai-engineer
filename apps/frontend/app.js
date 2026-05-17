@@ -1,6 +1,6 @@
-// Local AI Assistant - Day 11 UI
+// Local AI Assistant - Day 12 UI
 //
-// Adds: collection picker on new conversation, sources panel under replies.
+// Adds: knowledge sidebar section, collection management view, file upload.
 
 (() => {
   const state = {
@@ -10,9 +10,13 @@
     abortController: null,
     conversations: [],
     collections: [],
+    activeView: 'chat',
+    activeCollection: null,
   };
 
   const els = {
+    chatView: document.getElementById('chat-view'),
+    collectionView: document.getElementById('collection-view'),
     chatWindow: document.getElementById('chat-window'),
     form: document.getElementById('chat-form'),
     messageInput: document.getElementById('message-input'),
@@ -20,9 +24,11 @@
     sendButton: document.getElementById('send-button'),
     stopButton: document.getElementById('stop-button'),
     newConversation: document.getElementById('new-conversation'),
+    newCollection: document.getElementById('new-collection'),
     logoutButton: document.getElementById('logout-button'),
     statusLine: document.getElementById('status-line'),
     conversationList: document.getElementById('conversation-list'),
+    collectionList: document.getElementById('collection-list'),
     conversationTitle: document.getElementById('conversation-title'),
     collectionBadge: document.getElementById('collection-badge'),
     collectionBadgeName: document.getElementById('collection-badge-name'),
@@ -30,13 +36,23 @@
     newConvCollection: document.getElementById('new-conv-collection'),
     newConvCancel: document.getElementById('new-conv-cancel'),
     newConvCreate: document.getElementById('new-conv-create'),
+    newCollDialog: document.getElementById('new-collection-dialog'),
+    newCollName: document.getElementById('new-coll-name'),
+    newCollError: document.getElementById('new-coll-error'),
+    newCollCancel: document.getElementById('new-coll-cancel'),
+    newCollCreate: document.getElementById('new-coll-create'),
+    collViewName: document.getElementById('collection-view-name'),
+    collViewInfo: document.getElementById('collection-view-info'),
+    uploadArea: document.getElementById('upload-area'),
+    uploadInput: document.getElementById('upload-input'),
+    uploadStatus: document.getElementById('upload-status'),
+    collClose: document.getElementById('collection-close'),
+    collDelete: document.getElementById('collection-delete'),
   };
 
   // ---------- Utilities ----------
 
-  function redirectToLogin() {
-    window.location.href = '/login.html';
-  }
+  function redirectToLogin() { window.location.href = '/login.html'; }
 
   async function apiFetch(url, options = {}) {
     const response = await fetch(url, {
@@ -83,6 +99,12 @@
     } else {
       els.collectionBadge.hidden = true;
     }
+  }
+
+  function setView(view) {
+    state.activeView = view;
+    els.chatView.hidden = view !== 'chat';
+    els.collectionView.hidden = view !== 'collection';
   }
 
   function renderEmptyState() {
@@ -177,22 +199,52 @@
     return { messageDiv: div, body };
   }
 
-  // ---------- Collections ----------
+  // ---------- Collections sidebar ----------
 
   async function loadCollections() {
     try {
       const res = await apiFetch('/api/collections');
-      if (!res.ok) return;
+      if (!res.ok) {
+        els.collectionList.innerHTML = '<p class="empty-list">Failed to load.</p>';
+        return;
+      }
       state.collections = await res.json();
+      renderCollections();
       renderCollectionOptions();
     } catch (e) {
       if (e.message !== 'Not authenticated') console.warn(e);
     }
   }
 
+  function renderCollections() {
+    if (state.collections.length === 0) {
+      els.collectionList.innerHTML = '<p class="empty-list">No collections yet.</p>';
+      return;
+    }
+    els.collectionList.innerHTML = '';
+    for (const col of state.collections) {
+      const item = document.createElement('div');
+      item.className = 'collection-item';
+      if (col.name === state.activeCollection) item.classList.add('active');
+      item.dataset.name = col.name;
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'collection-item-name';
+      nameEl.textContent = col.name;
+      item.appendChild(nameEl);
+
+      const countEl = document.createElement('span');
+      countEl.className = 'collection-item-count';
+      countEl.textContent = `${col.points_count}`;
+      item.appendChild(countEl);
+
+      item.addEventListener('click', () => openCollectionView(col.name));
+      els.collectionList.appendChild(item);
+    }
+  }
+
   function renderCollectionOptions() {
     const select = els.newConvCollection;
-    // Keep the "None" default option, rebuild the rest
     select.innerHTML = '<option value="">None — plain chat</option>';
     for (const col of state.collections) {
       const opt = document.createElement('option');
@@ -202,7 +254,143 @@
     }
   }
 
-  // ---------- Sidebar ----------
+  function highlightActiveCollection() {
+    const items = els.collectionList.querySelectorAll('.collection-item');
+    items.forEach(item => {
+      item.classList.toggle('active', item.dataset.name === state.activeCollection);
+    });
+  }
+
+  // ---------- Collection view ----------
+
+  function openCollectionView(name) {
+    if (state.isStreaming) return;
+    state.activeCollection = name;
+    highlightActiveCollection();
+
+    els.collViewName.textContent = name;
+    const col = state.collections.find(c => c.name === name);
+    els.collViewInfo.textContent = col
+      ? `${col.points_count} chunks indexed`
+      : '';
+    els.uploadStatus.hidden = true;
+    setView('collection');
+  }
+
+  function closeCollectionView() {
+    state.activeCollection = null;
+    highlightActiveCollection();
+    setView('chat');
+  }
+
+  async function uploadFile(file) {
+    if (!file) return;
+    const name = state.activeCollection;
+    if (!name) return;
+
+    const validExt = /\.(pdf|md)$/i.test(file.name);
+    if (!validExt) {
+      showUploadStatus('Unsupported file type. Use .pdf or .md.', 'error');
+      return;
+    }
+
+    showUploadStatus(`Uploading ${file.name}…`, 'uploading');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await apiFetch(`/api/collections/${encodeURIComponent(name)}/files`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showUploadStatus(`Upload failed: ${err.detail || res.status}`, 'error');
+        return;
+      }
+      const result = await res.json();
+      const msg = `Ingested ${result.filename}: ${result.chunks_stored} chunks`;
+      showUploadStatus(msg, 'success');
+      await loadCollections();
+      // Update the count display in the view header
+      const col = state.collections.find(c => c.name === name);
+      if (col) els.collViewInfo.textContent = `${col.points_count} chunks indexed`;
+    } catch (e) {
+      if (e.message !== 'Not authenticated') {
+        showUploadStatus(`Network error: ${e.message}`, 'error');
+      }
+    }
+  }
+
+  function showUploadStatus(message, kind) {
+    els.uploadStatus.hidden = false;
+    els.uploadStatus.textContent = message;
+    els.uploadStatus.className = kind;
+  }
+
+  async function deleteActiveCollection() {
+    const name = state.activeCollection;
+    if (!name) return;
+    if (!confirm(`Delete collection "${name}"? This removes all its indexed chunks. Uploaded files on disk are kept.`)) {
+      return;
+    }
+    try {
+      const res = await apiFetch(`/api/collections/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      });
+      if (res.status !== 204) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed to delete: ${err.detail || res.status}`);
+        return;
+      }
+      await loadCollections();
+      closeCollectionView();
+    } catch (e) {
+      if (e.message !== 'Not authenticated') alert(`Network error: ${e.message}`);
+    }
+  }
+
+  // ---------- New collection modal ----------
+
+  function openNewCollectionDialog() {
+    els.newCollName.value = '';
+    els.newCollError.hidden = true;
+    els.newCollDialog.showModal();
+    els.newCollName.focus();
+  }
+
+  async function createCollection() {
+    const name = els.newCollName.value.trim();
+    if (!name) {
+      els.newCollError.textContent = 'Name is required.';
+      els.newCollError.hidden = false;
+      return;
+    }
+    try {
+      const res = await apiFetch('/api/collections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        els.newCollError.textContent = err.detail || `Failed (HTTP ${res.status})`;
+        els.newCollError.hidden = false;
+        return;
+      }
+      els.newCollDialog.close();
+      await loadCollections();
+      openCollectionView(name);
+    } catch (e) {
+      if (e.message !== 'Not authenticated') {
+        els.newCollError.textContent = `Network error: ${e.message}`;
+        els.newCollError.hidden = false;
+      }
+    }
+  }
+
+  // ---------- Conversations ----------
 
   async function loadConversationList() {
     try {
@@ -229,7 +417,9 @@
     for (const conv of state.conversations) {
       const item = document.createElement('div');
       item.className = 'conversation-item';
-      if (conv.id === state.conversationId) item.classList.add('active');
+      if (conv.id === state.conversationId && state.activeView === 'chat') {
+        item.classList.add('active');
+      }
       item.dataset.conversationId = conv.id;
       item.dataset.collectionId = conv.collection_id || '';
 
@@ -264,8 +454,6 @@
     });
   }
 
-  // ---------- Load and rehydrate ----------
-
   async function loadConversation(conversationId, title, collectionId) {
     if (state.isStreaming) return;
     try {
@@ -289,13 +477,12 @@
           addMessage(msg.role, msg.content, meta, null);
         }
       }
+      setView('chat');
       highlightActiveConversation();
     } catch (e) {
       if (e.message !== 'Not authenticated') console.error(e);
     }
   }
-
-  // ---------- New conversation ----------
 
   function openNewConversationDialog() {
     if (state.isStreaming) return;
@@ -324,12 +511,11 @@
       setConversationTitle(conv.title || 'New conversation');
       setCollectionBadge(conv.collection_id);
       renderEmptyState();
+      setView('chat');
       await loadConversationList();
       els.messageInput.focus();
     } catch (e) {
-      if (e.message !== 'Not authenticated') {
-        alert(`Network error: ${e.message}`);
-      }
+      if (e.message !== 'Not authenticated') alert(`Network error: ${e.message}`);
     }
   }
 
@@ -389,13 +575,9 @@
               const metaDiv = document.createElement('div');
               metaDiv.className = 'message-meta';
               metaDiv.innerHTML = metaParts.join(' ');
-              // Insert before any existing sources panel
               const existingPanel = messageDiv.querySelector('.sources-panel');
-              if (existingPanel) {
-                messageDiv.insertBefore(metaDiv, existingPanel);
-              } else {
-                messageDiv.appendChild(metaDiv);
-              }
+              if (existingPanel) messageDiv.insertBefore(metaDiv, existingPanel);
+              else messageDiv.appendChild(metaDiv);
             }
             if (sources && sources.length) {
               const panel = buildSourcesPanel(sources);
@@ -433,7 +615,7 @@
     }
   }
 
-  // ---------- Form handlers ----------
+  // ---------- Handlers ----------
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -476,9 +658,7 @@
 
   async function handleLogout() {
     try {
-      await fetch('/api/auth/logout', {
-        method: 'POST', credentials: 'same-origin',
-      });
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
     } catch (e) {}
     redirectToLogin();
   }
@@ -488,6 +668,28 @@
       event.preventDefault();
       els.form.requestSubmit();
     }
+  }
+
+  function wireUploadArea() {
+    els.uploadArea.addEventListener('click', () => els.uploadInput.click());
+    els.uploadInput.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) uploadFile(file);
+      els.uploadInput.value = '';
+    });
+    els.uploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      els.uploadArea.classList.add('drag-active');
+    });
+    els.uploadArea.addEventListener('dragleave', () => {
+      els.uploadArea.classList.remove('drag-active');
+    });
+    els.uploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      els.uploadArea.classList.remove('drag-active');
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) uploadFile(file);
+    });
   }
 
   // ---------- Startup ----------
@@ -521,10 +723,17 @@
     els.form.addEventListener('submit', handleSubmit);
     els.stopButton.addEventListener('click', handleStop);
     els.newConversation.addEventListener('click', openNewConversationDialog);
+    els.newCollection.addEventListener('click', openNewCollectionDialog);
     els.newConvCancel.addEventListener('click', () => els.newConvDialog.close());
     els.newConvCreate.addEventListener('click', createNewConversation);
+    els.newCollCancel.addEventListener('click', () => els.newCollDialog.close());
+    els.newCollCreate.addEventListener('click', createCollection);
+    els.collClose.addEventListener('click', closeCollectionView);
+    els.collDelete.addEventListener('click', deleteActiveCollection);
     els.logoutButton.addEventListener('click', handleLogout);
     els.messageInput.addEventListener('keydown', handleKeyDown);
+
+    wireUploadArea();
 
     renderEmptyState();
     await checkHealth();

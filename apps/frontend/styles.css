@@ -345,3 +345,147 @@ dialog#new-conversation-dialog footer button {
   width: auto;
   flex: 0 0 auto;
 }
+
+/* Day 12 additions */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-section {
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sidebar-section-flex {
+  flex: 1;
+  min-height: 0;
+}
+
+.collection-list {
+  max-height: 30vh;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.collection-item {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.4rem;
+  cursor: pointer;
+  margin-bottom: 0.25rem;
+  font-size: 0.88rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.collection-item:hover {
+  background: var(--pico-muted-background-color);
+}
+
+.collection-item.active {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+}
+
+.collection-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collection-item-count {
+  font-size: 0.72rem;
+  opacity: 0.75;
+  flex: 0 0 auto;
+}
+
+#sidebar-header button {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+#chat-view,
+#collection-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+#collection-view article {
+  width: 100%;
+  margin: 0;
+}
+
+.upload-area {
+  border: 2px dashed var(--pico-muted-border-color);
+  border-radius: 0.6rem;
+  padding: 2.5rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.1s ease, background 0.1s ease;
+  margin-bottom: 1rem;
+}
+
+.upload-area:hover,
+.upload-area.drag-active {
+  border-color: var(--pico-primary);
+  background: var(--pico-muted-background-color);
+}
+
+.upload-hint {
+  margin: 0;
+  color: var(--pico-muted-color);
+  font-size: 0.95rem;
+}
+
+#upload-status {
+  padding: 0.75rem 1rem;
+  border-radius: 0.4rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+#upload-status.uploading {
+  background: var(--pico-muted-background-color);
+  color: var(--pico-color);
+}
+
+#upload-status.success {
+  background: rgba(46, 139, 87, 0.12);
+  color: #2e8b57;
+  border: 1px solid #2e8b57;
+}
+
+#upload-status.error {
+  background: rgba(192, 57, 43, 0.12);
+  color: #c0392b;
+  border: 1px solid #c0392b;
+}
+
+.collection-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.collection-actions button {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
+}
+
+.muted {
+  color: var(--pico-muted-color);
+  font-size: 0.9rem;
+  margin: 0;
+}

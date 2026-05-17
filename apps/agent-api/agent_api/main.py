@@ -1,8 +1,6 @@
 """Agent API entry point.
 
-Phase A Day 11: RAG integration. Conversations attached to a collection
-retrieve relevant chunks before generating, and replies carry citation
-metadata.
+Phase A Day 12: upload + ingest through UI, plus collection management endpoints.
 """
 
 import json
@@ -14,16 +12,25 @@ from fastapi import (
     Cookie,
     Depends,
     FastAPI,
+    File,
+    Form,
     Header,
     HTTPException,
     Response,
+    UploadFile,
 )
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from agent_api.auth.session_store import session_store
-from agent_api.ingest.qdrant_store import _client as qdrant_client_factory
+from agent_api.ingest.async_runner import ingest_file_async
+from agent_api.ingest.qdrant_store import (
+    _client as qdrant_client_factory,
+    drop_collection,
+    ensure_collection,
+)
+from agent_api.ingest.uploads import save_upload
 from agent_api.models.base import ChatMessage
 from agent_api.models.ollama import OllamaClient
 from agent_api.models.router import pick_model
@@ -55,7 +62,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Local AI Engineering Assistant",
     description="Agent API for the local-ai-engineer project",
-    version="0.7.0",
+    version="0.8.0",
     lifespan=lifespan,
 )
 
@@ -108,16 +115,17 @@ class CreateConversationRequest(BaseModel):
     collection_id: str | None = Field(default=None)
 
 
+class CreateCollectionRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., description="The user's message")
     task_type: str = Field(default="auto")
     system_prompt: str | None = Field(default=None)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     conversation_id: str | None = Field(default=None)
-    collection_id: str | None = Field(
-        default=None,
-        description="If creating a new conversation, attach this collection",
-    )
+    collection_id: str | None = Field(default=None)
 
 
 class ChatReply(BaseModel):
@@ -151,11 +159,17 @@ class CollectionInfo(BaseModel):
     points_count: int
 
 
+class IngestResultPayload(BaseModel):
+    filename: str
+    chunks_created: int
+    chunks_stored: int
+    errors: list[str] = Field(default_factory=list)
+
+
 # ---------- Helpers ----------
 
 
 def _chunk_to_source_dict(chunk) -> dict:
-    """Serialize a search result chunk for the API response."""
     from pathlib import Path
     return {
         "score": round(chunk.score, 4),
@@ -174,7 +188,6 @@ async def _resolve_or_create_conversation(
     collection_id: str | None,
     first_message_preview: str,
 ) -> tuple[str, str | None]:
-    """Resolve conversation and return (id, collection_id_for_retrieval)."""
     if conversation_id is not None:
         existing = await storage.conversations.get(tenant_id, conversation_id)
         if existing is None:
@@ -213,12 +226,9 @@ def _build_messages_with_rag(
     history_messages: list[ChatMessage],
     user_message: str,
 ) -> list[ChatMessage]:
-    """Insert RAG system prompt before history, then user message at the end."""
     out: list[ChatMessage] = []
     if rag_context is not None:
         out.append(ChatMessage(role="system", content=build_rag_system_prompt(rag_context)))
-    # Drop any existing system messages from history when injecting our own;
-    # history's system messages are conversation-scoped overrides and would conflict.
     for m in history_messages:
         if m.role == "system" and rag_context is not None:
             continue
@@ -230,7 +240,6 @@ async def _maybe_retrieve(
     collection_id: str | None,
     user_message: str,
 ) -> RetrievalContext | None:
-    """If a collection is attached, run retrieval. Else return None."""
     if not collection_id:
         return None
     return retrieve_for_query(
@@ -295,11 +304,13 @@ async def health() -> dict:
     }
 
 
+# ---------- Collections ----------
+
+
 @app.get("/api/collections", response_model=list[CollectionInfo])
 async def list_collections(
     _: Annotated[str, Depends(require_auth)],
 ) -> list[CollectionInfo]:
-    """List Qdrant collections."""
     try:
         c = qdrant_client_factory()
         cols = c.get_collections().collections
@@ -315,13 +326,90 @@ async def list_collections(
         raise HTTPException(status_code=503, detail=f"Qdrant unavailable: {e}") from e
 
 
+@app.post("/api/collections", response_model=CollectionInfo, status_code=201)
+async def create_collection(
+    request: CreateCollectionRequest,
+    _: Annotated[str, Depends(require_auth)],
+) -> CollectionInfo:
+    """Create an empty collection."""
+    # Same safe-name rules we use for filesystem
+    from agent_api.ingest.uploads import safe_filename
+    if safe_filename(request.name) != request.name:
+        raise HTTPException(
+            status_code=400,
+            detail="Collection name must contain only letters, digits, dots, hyphens, or underscores",
+        )
+    try:
+        ensure_collection(request.name)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Failed to create collection: {e}") from e
+    return CollectionInfo(name=request.name, points_count=0)
+
+
+@app.delete("/api/collections/{name}", status_code=204)
+async def delete_collection(
+    name: str,
+    _: Annotated[str, Depends(require_auth)],
+) -> Response:
+    """Drop a collection. Idempotent: deleting an absent collection returns 204."""
+    try:
+        drop_collection(name)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Failed to drop collection: {e}") from e
+    return Response(status_code=204)
+
+
+@app.post(
+    "/api/collections/{name}/files",
+    response_model=IngestResultPayload,
+)
+async def upload_to_collection(
+    name: str,
+    _: Annotated[str, Depends(require_auth)],
+    file: Annotated[UploadFile, File(...)],
+) -> IngestResultPayload:
+    """Upload a file and ingest it into the named collection.
+
+    Synchronous: the response returns once ingestion completes.
+    """
+    # Read upload content
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    # Save to disk (validates extension + size)
+    try:
+        saved_path = save_upload(name, file.filename or "upload", content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # Ingest. ingest_file_async handles thread-pool offloading internally.
+    try:
+        result = await ingest_file_async(saved_path, name)
+    except Exception as e:
+        # Leave the file on disk so the user can retry; just surface the error.
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ingestion failed: {type(e).__name__}: {e}",
+        ) from e
+
+    return IngestResultPayload(
+        filename=saved_path.name,
+        chunks_created=result.chunks_created,
+        chunks_stored=result.chunks_stored,
+        errors=result.errors,
+    )
+
+
+# ---------- Conversations ----------
+
+
 @app.post("/api/conversations", response_model=ConversationSummary)
 async def create_conversation(
     request: CreateConversationRequest,
     _: Annotated[str, Depends(require_auth)],
     storage: Annotated[Storage, Depends(get_storage)],
 ) -> ConversationSummary:
-    """Create a conversation, optionally attached to a collection."""
     conv = await storage.conversations.create(
         tenant_id=settings.tenant_id,
         title=request.title,
@@ -375,6 +463,9 @@ async def list_messages(
         )
         for m in msgs
     ]
+
+
+# ---------- Chat ----------
 
 
 @app.post("/api/chat", response_model=ChatReply)
@@ -464,7 +555,6 @@ async def chat_stream(
     )
 
     async def event_generator() -> AsyncIterator[str]:
-        # First event: metadata about the run, including any sources
         sources = []
         if rag_context:
             sources = [_chunk_to_source_dict(c) for c in rag_context.chunks]
