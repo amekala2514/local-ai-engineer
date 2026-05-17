@@ -31,7 +31,7 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Day 8: Browser chat UI with cookie sessions and streaming
 - [x] Day 9: Auto-routing with reason, conversation sidebar
 - [ ] Day 10: Document ingestion pipeline with mixed file-type support
-- [ ] Day 11: RAG integration with citation display
+- [x] Day 11: RAG integration with citation display
 - [ ] Day 12: File upload through UI, collection management
 - [ ] Day 13: Eval harness with baseline + UI polish
 
