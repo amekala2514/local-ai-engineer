@@ -1,6 +1,7 @@
-// Local AI Assistant - Day 12 UI
+// Local AI Assistant - Day 13a UI
 //
-// Adds: knowledge sidebar section, collection management view, file upload.
+// Adds: rename/delete conversations, regenerate, copy code, syntax highlighting,
+// smart auto-scroll, sources collapsed by default, better connection state.
 
 (() => {
   const state = {
@@ -12,6 +13,8 @@
     collections: [],
     activeView: 'chat',
     activeCollection: null,
+    autoScroll: true,  // when true, new content scrolls to bottom
+    openMenu: null,    // currently-open sidebar item menu (DOM element)
   };
 
   const els = {
@@ -79,10 +82,6 @@
     return div.innerHTML;
   }
 
-  function scrollChatToBottom() {
-    els.chatWindow.scrollTop = els.chatWindow.scrollHeight;
-  }
-
   function setStatus(text, kind) {
     els.statusLine.textContent = text;
     els.statusLine.className = kind || '';
@@ -123,10 +122,71 @@
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   }
 
+  // ---------- Smart auto-scroll ----------
+
+  function isNearBottom() {
+    const el = els.chatWindow;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  }
+
+  function maybeScrollToBottom() {
+    if (state.autoScroll) {
+      els.chatWindow.scrollTop = els.chatWindow.scrollHeight;
+    }
+  }
+
+  // When the user scrolls, decide whether auto-scroll should be re-enabled.
+  function attachScrollListener() {
+    els.chatWindow.addEventListener('scroll', () => {
+      state.autoScroll = isNearBottom();
+    });
+  }
+
+  // ---------- Code blocks: highlight + copy button ----------
+
+  function enhanceCodeBlocks(container) {
+    const blocks = container.querySelectorAll('pre code');
+    blocks.forEach((block) => {
+      // Skip if already enhanced
+      if (block.dataset.enhanced === '1') return;
+      // Highlight
+      if (window.hljs) {
+        try { hljs.highlightElement(block); } catch (e) {}
+      }
+      // Add copy button to the parent <pre>
+      const pre = block.parentElement;
+      if (pre && !pre.querySelector('.copy-code-btn')) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'copy-code-btn';
+        btn.textContent = 'Copy';
+        btn.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(block.textContent);
+            btn.textContent = 'Copied';
+            btn.classList.add('copied');
+            setTimeout(() => {
+              btn.textContent = 'Copy';
+              btn.classList.remove('copied');
+            }, 1500);
+          } catch (e) {
+            btn.textContent = 'Failed';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+          }
+        });
+        pre.appendChild(btn);
+      }
+      block.dataset.enhanced = '1';
+    });
+  }
+
+  // ---------- Sources panel (collapsed by default) ----------
+
   function buildSourcesPanel(sources) {
     if (!sources || sources.length === 0) return null;
     const panel = document.createElement('details');
     panel.className = 'sources-panel';
+    // Closed by default — no `open` attribute
 
     const summary = document.createElement('summary');
     summary.textContent = `Sources (${sources.length})`;
@@ -170,7 +230,9 @@
     return panel;
   }
 
-  function addMessage(role, content, meta, sources) {
+  // ---------- Messages ----------
+
+  function addMessage(role, content, meta, sources, options = {}) {
     const emptyState = els.chatWindow.querySelector('.empty-state');
     if (emptyState) emptyState.remove();
 
@@ -189,17 +251,120 @@
       div.appendChild(metaDiv);
     }
 
-    if (sources) {
+    if (sources && sources.length) {
       const panel = buildSourcesPanel(sources);
       if (panel) div.appendChild(panel);
     }
 
+    // Assistant messages get a Regenerate button (visible on hover)
+    if (role === 'assistant' && !options.suppressActions) {
+      const actions = document.createElement('div');
+      actions.className = 'message-actions';
+      const regen = document.createElement('button');
+      regen.type = 'button';
+      regen.className = 'message-action-btn';
+      regen.textContent = 'Regenerate';
+      regen.addEventListener('click', () => regenerateLast(div));
+      actions.appendChild(regen);
+      div.appendChild(actions);
+    }
+
+    enhanceCodeBlocks(body);
+
     els.chatWindow.appendChild(div);
-    scrollChatToBottom();
+    maybeScrollToBottom();
     return { messageDiv: div, body };
   }
 
-  // ---------- Collections sidebar ----------
+  // ---------- Regenerate ----------
+
+  async function regenerateLast(messageDiv) {
+    if (state.isStreaming) return;
+    if (!state.conversationId) return;
+
+    // Remove the assistant message from the DOM immediately
+    messageDiv.remove();
+    setStatus('Regenerating…', '');
+    state.isStreaming = true;
+    els.sendButton.disabled = true;
+
+    try {
+      const res = await apiFetch(
+        `/api/conversations/${state.conversationId}/regenerate`,
+        { method: 'POST' }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        addMessage('error', `Regeneration failed: ${err.detail || res.status}`, null, null);
+        return;
+      }
+      const data = await res.json();
+      const meta = `via <strong>${escapeHtml(data.model_used)}</strong>`;
+      addMessage('assistant', data.reply, meta, data.sources || null);
+      setStatus('Ready', 'ok');
+    } catch (e) {
+      if (e.message !== 'Not authenticated') {
+        addMessage('error', `Network error: ${e.message}`, null, null);
+        setStatus('Error', 'error');
+      }
+    } finally {
+      state.isStreaming = false;
+      els.sendButton.disabled = false;
+      els.messageInput.focus();
+    }
+  }
+
+  // ---------- Sidebar item menus ----------
+
+  function closeOpenMenu() {
+    if (state.openMenu) {
+      state.openMenu.hidden = true;
+      state.openMenu = null;
+    }
+  }
+
+  function buildItemMenu(actions) {
+    const menu = document.createElement('div');
+    menu.className = 'item-menu';
+    menu.hidden = true;
+    for (const a of actions) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'item-menu-action';
+      if (a.destructive) btn.classList.add('destructive');
+      btn.textContent = a.label;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeOpenMenu();
+        a.onClick();
+      });
+      menu.appendChild(btn);
+    }
+    return menu;
+  }
+
+  function attachMenuButton(itemEl, actions) {
+    const menu = buildItemMenu(actions);
+    itemEl.appendChild(menu);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'item-menu-btn';
+    btn.title = 'More';
+    btn.textContent = '⋯';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const wasOpen = !menu.hidden;
+      closeOpenMenu();
+      if (!wasOpen) {
+        menu.hidden = false;
+        state.openMenu = menu;
+      }
+    });
+    itemEl.appendChild(btn);
+  }
+
+  // ---------- Collections ----------
 
   async function loadCollections() {
     try {
@@ -261,8 +426,6 @@
     });
   }
 
-  // ---------- Collection view ----------
-
   function openCollectionView(name) {
     if (state.isStreaming) return;
     state.activeCollection = name;
@@ -270,9 +433,7 @@
 
     els.collViewName.textContent = name;
     const col = state.collections.find(c => c.name === name);
-    els.collViewInfo.textContent = col
-      ? `${col.points_count} chunks indexed`
-      : '';
+    els.collViewInfo.textContent = col ? `${col.points_count} chunks indexed` : '';
     els.uploadStatus.hidden = true;
     setView('collection');
   }
@@ -287,22 +448,16 @@
     if (!file) return;
     const name = state.activeCollection;
     if (!name) return;
-
-    const validExt = /\.(pdf|md)$/i.test(file.name);
-    if (!validExt) {
+    if (!/\.(pdf|md)$/i.test(file.name)) {
       showUploadStatus('Unsupported file type. Use .pdf or .md.', 'error');
       return;
     }
-
     showUploadStatus(`Uploading ${file.name}…`, 'uploading');
-
     const formData = new FormData();
     formData.append('file', file);
-
     try {
       const res = await apiFetch(`/api/collections/${encodeURIComponent(name)}/files`, {
-        method: 'POST',
-        body: formData,
+        method: 'POST', body: formData,
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -310,10 +465,8 @@
         return;
       }
       const result = await res.json();
-      const msg = `Ingested ${result.filename}: ${result.chunks_stored} chunks`;
-      showUploadStatus(msg, 'success');
+      showUploadStatus(`Ingested ${result.filename}: ${result.chunks_stored} chunks`, 'success');
       await loadCollections();
-      // Update the count display in the view header
       const col = state.collections.find(c => c.name === name);
       if (col) els.collViewInfo.textContent = `${col.points_count} chunks indexed`;
     } catch (e) {
@@ -332,13 +485,9 @@
   async function deleteActiveCollection() {
     const name = state.activeCollection;
     if (!name) return;
-    if (!confirm(`Delete collection "${name}"? This removes all its indexed chunks. Uploaded files on disk are kept.`)) {
-      return;
-    }
+    if (!confirm(`Delete collection "${name}"? This removes all indexed chunks. Files on disk are kept.`)) return;
     try {
-      const res = await apiFetch(`/api/collections/${encodeURIComponent(name)}`, {
-        method: 'DELETE',
-      });
+      const res = await apiFetch(`/api/collections/${encodeURIComponent(name)}`, { method: 'DELETE' });
       if (res.status !== 204) {
         const err = await res.json().catch(() => ({}));
         alert(`Failed to delete: ${err.detail || res.status}`);
@@ -351,7 +500,7 @@
     }
   }
 
-  // ---------- New collection modal ----------
+  // ---------- New collection ----------
 
   function openNewCollectionDialog() {
     els.newCollName.value = '';
@@ -390,11 +539,11 @@
     }
   }
 
-  // ---------- Conversations ----------
+  // ---------- Conversations: list + rename + delete ----------
 
   async function loadConversationList() {
     try {
-      const res = await apiFetch('/api/conversations?limit=100');
+      const res = await apiFetch('/api/conversations?limit=200');
       if (!res.ok) {
         els.conversationList.innerHTML = '<p class="empty-list">Failed to load.</p>';
         return;
@@ -426,10 +575,11 @@
       const title = document.createElement('span');
       title.className = 'conversation-item-title';
       title.textContent = conv.title || '(untitled)';
+      title.title = conv.title || '';  // tooltip with full title
       if (conv.collection_id) {
         const marker = document.createElement('span');
         marker.className = 'collection-marker';
-        marker.textContent = '📎';
+        marker.textContent = ' 📎';
         title.appendChild(marker);
       }
       item.appendChild(title);
@@ -443,7 +593,60 @@
         loadConversation(conv.id, conv.title, conv.collection_id);
       });
 
+      attachMenuButton(item, [
+        { label: 'Rename', onClick: () => promptRenameConversation(conv) },
+        { label: 'Delete', destructive: true, onClick: () => deleteConversation(conv) },
+      ]);
+
       els.conversationList.appendChild(item);
+    }
+  }
+
+  async function promptRenameConversation(conv) {
+    const newTitle = prompt('Rename conversation:', conv.title || '');
+    if (newTitle === null) return;
+    const trimmed = newTitle.trim();
+    if (!trimmed || trimmed === conv.title) return;
+    try {
+      const res = await apiFetch(`/api/conversations/${conv.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Rename failed: ${err.detail || res.status}`);
+        return;
+      }
+      await loadConversationList();
+      if (state.conversationId === conv.id) {
+        setConversationTitle(trimmed);
+      }
+    } catch (e) {
+      if (e.message !== 'Not authenticated') alert(`Network error: ${e.message}`);
+    }
+  }
+
+  async function deleteConversation(conv) {
+    if (!confirm(`Delete conversation "${conv.title || '(untitled)'}"? This cannot be undone.`)) return;
+    try {
+      const res = await apiFetch(`/api/conversations/${conv.id}`, { method: 'DELETE' });
+      if (res.status !== 204) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Delete failed: ${err.detail || res.status}`);
+        return;
+      }
+      if (state.conversationId === conv.id) {
+        state.conversationId = null;
+        state.conversationCollectionId = null;
+        els.chatWindow.innerHTML = '';
+        setConversationTitle('New conversation');
+        setCollectionBadge(null);
+        renderEmptyState();
+      }
+      await loadConversationList();
+    } catch (e) {
+      if (e.message !== 'Not authenticated') alert(`Network error: ${e.message}`);
     }
   }
 
@@ -459,12 +662,13 @@
     try {
       const res = await apiFetch(`/api/conversations/${conversationId}/messages`);
       if (!res.ok) {
-        addMessage('error', `Failed to load conversation: HTTP ${res.status}`);
+        addMessage('error', `Failed to load conversation: HTTP ${res.status}`, null, null);
         return;
       }
       const messages = await res.json();
       state.conversationId = conversationId;
       state.conversationCollectionId = collectionId || null;
+      state.autoScroll = true;
       els.chatWindow.innerHTML = '';
       setConversationTitle(title);
       setCollectionBadge(collectionId);
@@ -474,7 +678,9 @@
       } else {
         for (const msg of messages) {
           const meta = msg.model ? `via ${escapeHtml(msg.model)}` : null;
-          addMessage(msg.role, msg.content, meta, null);
+          // History messages don't get a Regenerate button — only the live last one
+          const isLast = msg === messages[messages.length - 1];
+          addMessage(msg.role, msg.content, meta, null, { suppressActions: !isLast || msg.role !== 'assistant' });
         }
       }
       setView('chat');
@@ -507,6 +713,7 @@
       els.newConvDialog.close();
       state.conversationId = conv.id;
       state.conversationCollectionId = conv.collection_id;
+      state.autoScroll = true;
       els.chatWindow.innerHTML = '';
       setConversationTitle(conv.title || 'New conversation');
       setCollectionBadge(conv.collection_id);
@@ -542,7 +749,7 @@
       throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
-    const { messageDiv, body: messageBody } = addMessage('assistant', '', null, null);
+    const { messageDiv, body: messageBody } = addMessage('assistant', '', null, null, { suppressActions: true });
     let accumulated = '';
     let modelUsed = null;
     let routingReason = null;
@@ -575,14 +782,25 @@
               const metaDiv = document.createElement('div');
               metaDiv.className = 'message-meta';
               metaDiv.innerHTML = metaParts.join(' ');
-              const existingPanel = messageDiv.querySelector('.sources-panel');
-              if (existingPanel) messageDiv.insertBefore(metaDiv, existingPanel);
-              else messageDiv.appendChild(metaDiv);
+              messageDiv.appendChild(metaDiv);
             }
             if (sources && sources.length) {
               const panel = buildSourcesPanel(sources);
               if (panel) messageDiv.appendChild(panel);
             }
+            // Add the Regenerate button now that streaming is complete
+            const actions = document.createElement('div');
+            actions.className = 'message-actions';
+            const regen = document.createElement('button');
+            regen.type = 'button';
+            regen.className = 'message-action-btn';
+            regen.textContent = 'Regenerate';
+            regen.addEventListener('click', () => regenerateLast(messageDiv));
+            actions.appendChild(regen);
+            messageDiv.appendChild(actions);
+
+            enhanceCodeBlocks(messageBody);
+
             if (isNewConversation && state.conversationId) {
               await loadConversationList();
             }
@@ -605,7 +823,7 @@
             if (parsed.content) {
               accumulated += parsed.content;
               messageBody.innerHTML = renderMarkdown(accumulated);
-              scrollChatToBottom();
+              maybeScrollToBottom();
             }
           } catch (e) {
             console.warn('Failed to parse SSE event:', data, e);
@@ -615,7 +833,7 @@
     }
   }
 
-  // ---------- Handlers ----------
+  // ---------- Form handlers ----------
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -624,8 +842,9 @@
     if (!message) return;
     const taskType = els.modelPicker.value;
 
-    addMessage('user', message, null, null);
+    addMessage('user', message, null, null, { suppressActions: true });
     els.messageInput.value = '';
+    state.autoScroll = true;
 
     state.isStreaming = true;
     els.sendButton.disabled = true;
@@ -709,8 +928,8 @@
     try {
       const res = await fetch('/api/health');
       const data = await res.json();
-      if (data.ollama_reachable) setStatus(`Connected (${data.version})`, 'ok');
-      else setStatus('Ollama unreachable', 'error');
+      if (data.ollama_reachable) setStatus(`Connected (v${data.version})`, 'ok');
+      else setStatus('Ollama unreachable — check Ollama is running', 'error');
     } catch (e) {
       setStatus('Cannot reach Agent API', 'error');
     }
@@ -733,7 +952,11 @@
     els.logoutButton.addEventListener('click', handleLogout);
     els.messageInput.addEventListener('keydown', handleKeyDown);
 
+    // Click anywhere else to close an open menu
+    document.addEventListener('click', () => closeOpenMenu());
+
     wireUploadArea();
+    attachScrollListener();
 
     renderEmptyState();
     await checkHealth();

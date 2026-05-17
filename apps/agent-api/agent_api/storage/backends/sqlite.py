@@ -138,6 +138,30 @@ class SQLiteConversationStore(ConversationStore):
         )
         await self._db.commit()
 
+    async def delete(self, tenant_id: str, conversation_id: str) -> bool:
+        """Delete a conversation and all its messages. Returns True if deleted."""
+        await self._db.execute(
+            "DELETE FROM messages WHERE conversation_id = ? AND tenant_id = ?",
+            (conversation_id, tenant_id),
+        )
+        cursor = await self._db.execute(
+            "DELETE FROM conversations WHERE id = ? AND tenant_id = ?",
+            (conversation_id, tenant_id),
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def rename(
+        self, tenant_id: str, conversation_id: str, new_title: str
+    ) -> bool:
+        """Update a conversation's title. Returns True if updated."""
+        cursor = await self._db.execute(
+            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+            (new_title, _now_iso(), conversation_id, tenant_id),
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
 
 class SQLiteMessageStore(MessageStore):
     def __init__(
@@ -199,6 +223,20 @@ class SQLiteMessageStore(MessageStore):
             for r in rows
         ]
 
+    async def delete_after(
+        self,
+        conversation_id: str,
+        tenant_id: str,
+        message_id: int,
+    ) -> int:
+        """Delete all messages in conversation with id > message_id. Used by regenerate."""
+        cursor = await self._db.execute(
+            "DELETE FROM messages WHERE conversation_id = ? AND tenant_id = ? AND id >= ?",
+            (conversation_id, tenant_id, message_id),
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
 
 class SQLiteStorage(Storage):
     def __init__(self, db_path: str) -> None:
@@ -230,7 +268,7 @@ class SQLiteStorage(Storage):
         chunk_count: int,
         chunk_ids: list[str],
     ) -> None:
-        """Log a retrieval call for later analysis (Phase B auto-detect work)."""
+        """Log a retrieval call for later analysis."""
         import json
         await self._db.execute(
             "INSERT INTO retrieval_log "

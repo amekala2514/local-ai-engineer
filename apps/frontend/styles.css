@@ -489,3 +489,202 @@ dialog#new-conversation-dialog footer button {
   font-size: 0.9rem;
   margin: 0;
 }
+
+/* Day 13a additions */
+
+/* Code blocks: position relative so the Copy button can absolute-position */
+.message pre {
+  position: relative;
+}
+
+.message pre code {
+  display: block;
+  padding-right: 4rem;  /* room for the Copy button */
+}
+
+.copy-code-btn {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  color: var(--pico-color);
+  border-radius: 0.3rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.message pre:hover .copy-code-btn {
+  opacity: 1;
+}
+
+.copy-code-btn:hover {
+  background: var(--pico-muted-background-color);
+}
+
+.copy-code-btn.copied {
+  color: #2e8b57;
+  opacity: 1;
+}
+
+/* Smart scroll-to-bottom pill */
+.scroll-pill {
+  position: absolute;
+  bottom: 7rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+  padding: 0.5rem 1rem;
+  border-radius: 1.5rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border: none;
+}
+
+.scroll-pill[hidden] {
+  display: none;
+}
+
+/* Sidebar item menu (3-dot button) */
+.conversation-item,
+.collection-item {
+  position: relative;
+}
+
+.item-menu-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: inherit;
+  padding: 0.15rem 0.4rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 0.3rem;
+  opacity: 0;
+  width: auto;
+  margin: 0;
+}
+
+.conversation-item:hover .item-menu-btn,
+.collection-item:hover .item-menu-btn {
+  opacity: 0.7;
+}
+
+.item-menu-btn:hover {
+  opacity: 1 !important;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.item-menu {
+  position: absolute;
+  top: 100%;
+  right: 0.5rem;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.4rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 20;
+  min-width: 140px;
+  padding: 0.25rem 0;
+}
+
+.item-menu[hidden] {
+  display: none;
+}
+
+.item-menu-action {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--pico-color);
+  cursor: pointer;
+  margin: 0;
+}
+
+.item-menu-action:hover {
+  background: var(--pico-muted-background-color);
+}
+
+.item-menu-action.destructive {
+  color: #c0392b;
+}
+
+/* Message-level actions (Regenerate) */
+.message-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.message.assistant:hover .message-actions {
+  opacity: 1;
+}
+
+.message-action-btn {
+  background: transparent;
+  border: 1px solid var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+  width: auto;
+  margin: 0;
+}
+
+.message-action-btn:hover {
+  background: var(--pico-muted-background-color);
+  color: var(--pico-color);
+}
+
+/* Improved title truncation - middle ellipsis for long titles */
+.conversation-item-title {
+  max-width: 100%;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Connection state pill (replaces "Connecting…" text-only) */
+#status-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Make sources panel slightly more compact and clearly clickable */
+.sources-panel {
+  font-size: 0.85rem;
+}
+
+.sources-panel summary {
+  user-select: none;
+  padding: 0.25rem 0;
+}
+
+/* Inline code styling */
+.message :not(pre) > code {
+  background: var(--pico-code-background-color);
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.2rem;
+  font-size: 0.88em;
+}
+
+/* The chat-window relative positioning so the scroll-pill anchors here */
+#chat-window {
+  position: relative;
+}

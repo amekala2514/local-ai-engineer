@@ -1,6 +1,7 @@
 """Agent API entry point.
 
-Phase A Day 12: upload + ingest through UI, plus collection management endpoints.
+Phase A Day 13a: adds conversation delete, rename, and regenerate endpoints
+on top of the Day 12 file-upload feature set.
 """
 
 import json
@@ -13,7 +14,6 @@ from fastapi import (
     Depends,
     FastAPI,
     File,
-    Form,
     Header,
     HTTPException,
     Response,
@@ -62,7 +62,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Local AI Engineering Assistant",
     description="Agent API for the local-ai-engineer project",
-    version="0.8.0",
+    version="0.9.0",
     lifespan=lifespan,
 )
 
@@ -113,6 +113,10 @@ class LoginRequest(BaseModel):
 class CreateConversationRequest(BaseModel):
     title: str | None = Field(default=None)
     collection_id: str | None = Field(default=None)
+
+
+class PatchConversationRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class CreateCollectionRequest(BaseModel):
@@ -332,7 +336,6 @@ async def create_collection(
     _: Annotated[str, Depends(require_auth)],
 ) -> CollectionInfo:
     """Create an empty collection."""
-    # Same safe-name rules we use for filesystem
     from agent_api.ingest.uploads import safe_filename
     if safe_filename(request.name) != request.name:
         raise HTTPException(
@@ -351,7 +354,7 @@ async def delete_collection(
     name: str,
     _: Annotated[str, Depends(require_auth)],
 ) -> Response:
-    """Drop a collection. Idempotent: deleting an absent collection returns 204."""
+    """Drop a collection. Idempotent."""
     try:
         drop_collection(name)
     except Exception as e:
@@ -368,26 +371,19 @@ async def upload_to_collection(
     _: Annotated[str, Depends(require_auth)],
     file: Annotated[UploadFile, File(...)],
 ) -> IngestResultPayload:
-    """Upload a file and ingest it into the named collection.
-
-    Synchronous: the response returns once ingestion completes.
-    """
-    # Read upload content
+    """Upload a file and ingest it into the named collection."""
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
 
-    # Save to disk (validates extension + size)
     try:
         saved_path = save_upload(name, file.filename or "upload", content)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    # Ingest. ingest_file_async handles thread-pool offloading internally.
     try:
         result = await ingest_file_async(saved_path, name)
     except Exception as e:
-        # Leave the file on disk so the user can retry; just surface the error.
         raise HTTPException(
             status_code=500,
             detail=f"Ingestion failed: {type(e).__name__}: {e}",
@@ -463,6 +459,106 @@ async def list_messages(
         )
         for m in msgs
     ]
+
+
+@app.patch("/api/conversations/{conversation_id}", response_model=ConversationSummary)
+async def patch_conversation(
+    conversation_id: str,
+    request: PatchConversationRequest,
+    _: Annotated[str, Depends(require_auth)],
+    storage: Annotated[Storage, Depends(get_storage)],
+) -> ConversationSummary:
+    """Update conversation fields. Currently supports renaming."""
+    if request.title is None:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    ok = await storage.conversations.rename(
+        settings.tenant_id, conversation_id, request.title
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    conv = await storage.conversations.get(settings.tenant_id, conversation_id)
+    return ConversationSummary(
+        id=conv.id, title=conv.title, collection_id=conv.collection_id,
+        created_at=conv.created_at.isoformat(),
+        updated_at=conv.updated_at.isoformat(),
+    )
+
+
+@app.delete("/api/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str,
+    _: Annotated[str, Depends(require_auth)],
+    storage: Annotated[Storage, Depends(get_storage)],
+) -> Response:
+    """Delete a conversation and all its messages."""
+    ok = await storage.conversations.delete(settings.tenant_id, conversation_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return Response(status_code=204)
+
+
+@app.post("/api/conversations/{conversation_id}/regenerate", response_model=ChatReply)
+async def regenerate_last(
+    conversation_id: str,
+    _: Annotated[str, Depends(require_auth)],
+    client: Annotated[OllamaClient, Depends(get_model_client)],
+    storage: Annotated[Storage, Depends(get_storage)],
+) -> ChatReply:
+    """Drop the last assistant message and regenerate it (non-streaming)."""
+    tenant_id = settings.tenant_id
+    conv = await storage.conversations.get(tenant_id, conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    msgs = await storage.messages.list_for_conversation(conversation_id, tenant_id)
+    if len(msgs) < 2 or msgs[-1].role != "assistant":
+        raise HTTPException(status_code=400, detail="Nothing to regenerate")
+
+    last_user = None
+    for m in reversed(msgs[:-1]):
+        if m.role == "user":
+            last_user = m
+            break
+    if last_user is None:
+        raise HTTPException(status_code=400, detail="No prior user message found")
+
+    # Delete the last assistant message (and any messages after the user's, just in case)
+    await storage.messages.delete_after(conversation_id, tenant_id, last_user.id + 1)
+
+    history = await storage.messages.list_for_conversation(conversation_id, tenant_id)
+    history_msgs: list[ChatMessage] = [
+        ChatMessage(role=m.role, content=m.content) for m in history
+    ]
+
+    rag_context = await _maybe_retrieve(conv.collection_id, last_user.content)
+    messages = _build_messages_with_rag(rag_context, history_msgs[:-1], last_user.content)
+    messages.append(ChatMessage(role="user", content=last_user.content))
+
+    decision = pick_model("auto", last_user.content)
+
+    try:
+        response = await client.chat(
+            messages=messages, model=decision.model, temperature=0.7
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Model backend error: {type(e).__name__}: {e}",
+        ) from e
+
+    await storage.messages.append(
+        conversation_id=conversation_id, tenant_id=tenant_id,
+        role="assistant", content=response.content, model=response.model,
+    )
+
+    return ChatReply(
+        reply=response.content,
+        model_used=response.model,
+        task_type=decision.task_type,
+        routing_reason=decision.reason,
+        conversation_id=conversation_id,
+        rag_used=rag_context is not None,
+        sources=[_chunk_to_source_dict(c) for c in rag_context.chunks] if rag_context else [],
+    )
 
 
 # ---------- Chat ----------
