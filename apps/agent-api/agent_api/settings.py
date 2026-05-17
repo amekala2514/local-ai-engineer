@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     model_code: str = Field(default="qwen2.5-coder:14b")
     model_code_heavy: str = Field(default="deepseek-coder-v2:16b")
     model_embedding: str = Field(default="nomic-embed-text")
+    rerank_enabled: bool = Field(default=True)
+    reranker_model: str = Field(default="BAAI/bge-reranker-base")
+    reranker_fp16: bool = Field(default=True)
     log_level: str = Field(default="INFO")
     log_format: str = Field(default="json")
 

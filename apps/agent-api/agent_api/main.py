@@ -16,6 +16,7 @@ from fastapi import (
     File,
     Header,
     HTTPException,
+    Request,
     Response,
     UploadFile,
 )
@@ -24,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from agent_api.auth.session_store import session_store
+from agent_api.auth.rate_limit import login_limiter
 from agent_api.ingest.async_runner import ingest_file_async
 from agent_api.ingest.qdrant_store import (
     _client as qdrant_client_factory,
@@ -111,8 +113,8 @@ class LoginRequest(BaseModel):
 
 
 class CreateConversationRequest(BaseModel):
-    title: str | None = Field(default=None)
-    collection_id: str | None = Field(default=None)
+    title: str | None = Field(default=None, max_length=200)
+    collection_id: str | None = Field(default=None, max_length=64)
 
 
 class PatchConversationRequest(BaseModel):
@@ -124,12 +126,17 @@ class CreateCollectionRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., description="The user's message")
-    task_type: str = Field(default="auto")
-    system_prompt: str | None = Field(default=None)
+    message: str = Field(
+        ...,
+        description="The user's message",
+        min_length=1,
+        max_length=32000,
+    )
+    task_type: str = Field(default="auto", max_length=32)
+    system_prompt: str | None = Field(default=None, max_length=8000)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    conversation_id: str | None = Field(default=None)
-    collection_id: str | None = Field(default=None)
+    conversation_id: str | None = Field(default=None, max_length=64)
+    collection_id: str | None = Field(default=None, max_length=64)
 
 
 class ChatReply(BaseModel):
@@ -246,7 +253,7 @@ async def _maybe_retrieve(
 ) -> RetrievalContext | None:
     if not collection_id:
         return None
-    return retrieve_for_query(
+    return await retrieve_for_query(
         query=user_message,
         collection_id=collection_id,
         top_k=5,
@@ -258,9 +265,22 @@ async def _maybe_retrieve(
 
 
 @app.post("/api/auth/login")
-async def login(request: LoginRequest, response: Response) -> dict:
+async def login(
+    request: LoginRequest,
+    response: Response,
+    http_request: Request,
+) -> dict:
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    allowed, retry_after = login_limiter.check(client_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many attempts. Try again in {retry_after}s.",
+            headers={"Retry-After": str(retry_after)},
+        )
     if request.token != settings.agent_api_token:
         raise HTTPException(status_code=401, detail="Invalid token")
+    login_limiter.reset(client_ip)
     new_session = session_store.create()
     response.set_cookie(
         key=SESSION_COOKIE_NAME,

@@ -1,28 +1,16 @@
 """Retrieval eval harness.
 
 Usage:
-    cd apps/agent-api
-    .venv/bin/python -m evals.run
+    .venv/bin/python -m evals.run                  # use the retriever (with rerank if enabled)
+    .venv/bin/python -m evals.run --no-rerank      # force vector-only
 
-Loads evals/questions.yaml, runs each question through the search engine,
-scores hit / near-miss / miss, and writes a timestamped markdown report
-to evals/runs/.
-
-Scoring rules:
-- HIT:       expected_source appears in top-K AND at least half of
-             expected_keywords appear across top-K chunks
-- NEAR-MISS: expected_source appears in top-K, but keywords don't
-- MISS:      expected_source not in top-K at all
-
-The scoring isn't perfect (keywords are a proxy for "the answer is
-actually here"), but it's deterministic and comparable across runs.
-That's what matters - we need a stable signal when we change chunking,
-embedding models, or retrieval parameters in Phase B.
+Writes a timestamped markdown report to evals/runs/.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime
 import sys
 from dataclasses import dataclass
@@ -31,12 +19,12 @@ from pathlib import Path
 import yaml
 
 
-# Make the agent_api package importable when this is run from the project root.
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "apps" / "agent-api"))
 
 from agent_api.ingest.embedder import close as close_embedder  # noqa: E402
 from agent_api.ingest.qdrant_store import SearchResult, search  # noqa: E402
+from agent_api.rag.retriever import retrieve_for_query  # noqa: E402
 
 
 VERDICT_HIT = "hit"
@@ -58,7 +46,7 @@ class EvalResult:
     question: EvalQuestion
     results: list[SearchResult]
     verdict: str
-    matched_source_rank: int | None  # 1-based rank where expected_source first appeared
+    matched_source_rank: int | None
     matched_keywords: list[str]
 
 
@@ -80,7 +68,6 @@ def load_questions(path: Path) -> tuple[str, list[EvalQuestion]]:
 
 
 def score_result(q: EvalQuestion, results: list[SearchResult]) -> EvalResult:
-    # Find first rank where source matches (substring match against filename)
     matched_rank: int | None = None
     for i, r in enumerate(results, start=1):
         src_name = Path(r.source_file).name
@@ -88,7 +75,6 @@ def score_result(q: EvalQuestion, results: list[SearchResult]) -> EvalResult:
             matched_rank = i
             break
 
-    # Concatenate all retrieved text and check which keywords appear
     haystack = " ".join(r.text.lower() for r in results)
     matched_keywords = [
         kw for kw in q.expected_keywords if kw.lower() in haystack
@@ -116,6 +102,7 @@ def render_report(
     collection: str,
     eval_results: list[EvalResult],
     top_k: int,
+    rerank: bool,
     started_at: datetime.datetime,
     finished_at: datetime.datetime,
 ) -> str:
@@ -124,7 +111,6 @@ def render_report(
     near = sum(1 for r in eval_results if r.verdict == VERDICT_NEAR)
     miss = sum(1 for r in eval_results if r.verdict == VERDICT_MISS)
 
-    # Category breakdown
     by_cat: dict[str, dict[str, int]] = {}
     for r in eval_results:
         cat = r.question.category
@@ -132,10 +118,12 @@ def render_report(
         by_cat[cat][r.verdict] += 1
 
     lines: list[str] = []
+    rerank_label = "rerank=on" if rerank else "rerank=off"
     lines.append(f"# Eval run — {started_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
     lines.append("")
     lines.append(f"**Collection:** `{collection}`  ")
     lines.append(f"**Top-K:** {top_k}  ")
+    lines.append(f"**Reranker:** `{rerank_label}`  ")
     duration = (finished_at - started_at).total_seconds()
     lines.append(f"**Duration:** {duration:.1f}s  ")
     lines.append("")
@@ -189,41 +177,35 @@ def render_report(
     return "\n".join(lines)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Run retrieval evaluation")
-    parser.add_argument(
-        "--questions",
-        type=Path,
-        default=_ROOT / "evals" / "questions.yaml",
-        help="Path to questions YAML",
-    )
-    parser.add_argument(
-        "--out",
-        type=Path,
-        default=_ROOT / "evals" / "runs",
-        help="Output directory for the report",
-    )
-    parser.add_argument("--top-k", type=int, default=5)
-    parser.add_argument(
-        "--collection",
-        default=None,
-        help="Override the collection from YAML",
-    )
-    args = parser.parse_args()
+async def run_one(q: EvalQuestion, collection: str, top_k: int, rerank: bool) -> EvalResult:
+    if rerank:
+        ctx = await retrieve_for_query(
+            query=q.question,
+            collection_id=collection,
+            top_k=top_k,
+            reason="eval",
+            rerank=True,
+        )
+        results = ctx.chunks
+    else:
+        results = search(collection, q.question, top_k=top_k)
+    return score_result(q, results)
 
+
+async def main_async(args) -> int:
     started_at = datetime.datetime.now(datetime.timezone.utc)
     print(f"Loading questions from {args.questions}…")
     collection, questions = load_questions(args.questions)
     if args.collection:
         collection = args.collection
 
-    print(f"Running {len(questions)} questions against collection '{collection}' (top-K={args.top_k})…")
+    rerank_label = "with rerank" if args.rerank else "without rerank"
+    print(f"Running {len(questions)} questions {rerank_label} against '{collection}' (top-K={args.top_k})…")
 
     eval_results: list[EvalResult] = []
     try:
         for q in questions:
-            results = search(collection, q.question, top_k=args.top_k)
-            er = score_result(q, results)
+            er = await run_one(q, collection, args.top_k, args.rerank)
             eval_results.append(er)
             marker = {VERDICT_HIT: "✓", VERDICT_NEAR: "~", VERDICT_MISS: "✗"}[er.verdict]
             print(f"  [{marker}] {q.id}: {er.verdict}")
@@ -231,11 +213,12 @@ def main() -> int:
         close_embedder()
 
     finished_at = datetime.datetime.now(datetime.timezone.utc)
-    report = render_report(collection, eval_results, args.top_k, started_at, finished_at)
+    report = render_report(collection, eval_results, args.top_k, args.rerank, started_at, finished_at)
 
     args.out.mkdir(parents=True, exist_ok=True)
     stamp = started_at.strftime("%Y-%m-%dT%H-%M-%SZ")
-    out_path = args.out / f"{stamp}.md"
+    suffix = "rerank" if args.rerank else "vector"
+    out_path = args.out / f"{stamp}-{suffix}.md"
     out_path.write_text(report, encoding="utf-8")
 
     total = len(eval_results)
@@ -249,6 +232,18 @@ def main() -> int:
     print()
     print(f"Report written to: {out_path}")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run retrieval evaluation")
+    parser.add_argument("--questions", type=Path, default=_ROOT / "evals" / "questions.yaml")
+    parser.add_argument("--out", type=Path, default=_ROOT / "evals" / "runs")
+    parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--collection", default=None)
+    parser.add_argument("--no-rerank", dest="rerank", action="store_false", default=True,
+                        help="Use plain vector search instead of reranking")
+    args = parser.parse_args()
+    return asyncio.run(main_async(args))
 
 
 if __name__ == "__main__":
