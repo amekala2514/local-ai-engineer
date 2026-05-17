@@ -247,3 +247,101 @@ body {
     display: none;
   }
 }
+
+/* Day 11 additions */
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.collection-badge {
+  flex: 0 0 auto;
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+  padding: 0.4rem 0.75rem;
+  border-radius: 1rem;
+  font-size: 0.85rem;
+}
+
+.conversation-item .collection-marker {
+  font-size: 0.7rem;
+  opacity: 0.7;
+  margin-left: 0.25rem;
+}
+
+.sources-panel {
+  margin-top: 0.75rem;
+  border-top: 1px dashed var(--pico-muted-border-color);
+  padding-top: 0.5rem;
+}
+
+.sources-panel summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--pico-muted-color);
+  margin-bottom: 0.5rem;
+  list-style: none;
+}
+
+.sources-panel summary::before {
+  content: "▶ ";
+  display: inline-block;
+  transition: transform 0.1s ease;
+}
+
+.sources-panel[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.source-item {
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.4rem;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.source-item-header {
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+.source-item-location {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  margin-left: 0.5rem;
+}
+
+.source-item-score {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  float: right;
+}
+
+.source-item-text {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--pico-color);
+  max-height: 8em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+dialog#new-conversation-dialog article {
+  max-width: 480px;
+}
+
+dialog#new-conversation-dialog footer {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+dialog#new-conversation-dialog footer button {
+  width: auto;
+  flex: 0 0 auto;
+}

@@ -28,6 +28,9 @@
           <h2 id="conversation-title">New conversation</h2>
           <p id="status-line">Connecting…</p>
         </hgroup>
+        <div class="collection-badge" id="collection-badge" hidden>
+          📎 <span id="collection-badge-name"></span>
+        </div>
       </header>
 
       <section id="chat-window" aria-live="polite"></section>
@@ -57,6 +60,26 @@
       </form>
     </main>
   </div>
+
+  <!-- New conversation modal -->
+  <dialog id="new-conversation-dialog">
+    <article>
+      <header>
+        <h3>New conversation</h3>
+      </header>
+      <label for="new-conv-collection">
+        Attach a knowledge collection (optional)
+        <select id="new-conv-collection">
+          <option value="">None — plain chat</option>
+        </select>
+        <small>RAG is used automatically when a collection is attached.</small>
+      </label>
+      <footer>
+        <button type="button" id="new-conv-cancel" class="secondary">Cancel</button>
+        <button type="button" id="new-conv-create">Create</button>
+      </footer>
+    </article>
+  </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <script src="/app.js"></script>
