@@ -28,6 +28,9 @@ from pydantic import BaseModel, Field
 from agent_api.auth.session_store import session_store
 from agent_api.auth.rate_limit import login_limiter
 from agent_api.middleware.security_headers import SecurityHeadersMiddleware
+from agent_api.web.fetcher import FetchError, fetch_url as _fetch_url
+from agent_api.web.sanitizer import sanitize_response
+from agent_api.web.validator import validate_url
 from agent_api.ingest.async_runner import ingest_file_async
 from agent_api.ingest.qdrant_store import (
     _client as qdrant_client_factory,
@@ -736,6 +739,53 @@ async def chat_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+# ---------- Day 16a: URL fetch endpoint ----------
+
+
+class FetchUrlRequest(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048)
+
+
+class FetchUrlResponse(BaseModel):
+    url: str
+    title: str | None
+    content: str
+    truncated: bool
+    content_type: str
+
+
+@app.post("/api/fetch_url", response_model=FetchUrlResponse)
+async def fetch_url_endpoint(
+    request: FetchUrlRequest,
+    _: Annotated[str, Depends(require_auth)],
+) -> FetchUrlResponse:
+    """Fetch a user-provided URL, sanitize it, and return clean text.
+
+    This endpoint is the sole entry point for web content in Phase B6.
+    The returned content is intended for the LLM to read as untrusted
+    reference material — the chat endpoint frames it accordingly.
+    """
+    # Up-front validation rejects obviously-bad URLs without any network calls
+    pre = validate_url(request.url, resolve_dns=False)
+    if not pre.valid:
+        raise HTTPException(status_code=400, detail=pre.reason)
+
+    try:
+        fetched = await _fetch_url(request.url)
+    except FetchError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    result = sanitize_response(fetched.content_type, fetched.body, fetched.encoding)
+
+    return FetchUrlResponse(
+        url=fetched.url,
+        title=result.title,
+        content=result.text,
+        truncated=result.truncated,
+        content_type=fetched.content_type,
     )
 
 
