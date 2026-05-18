@@ -4,6 +4,7 @@ Phase A Day 13a: adds conversation delete, rename, and regenerate endpoints
 on top of the Day 12 file-upload feature set.
 """
 
+import hmac
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -26,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from agent_api.auth.session_store import session_store
 from agent_api.auth.rate_limit import login_limiter
+from agent_api.middleware.security_headers import SecurityHeadersMiddleware
 from agent_api.ingest.async_runner import ingest_file_async
 from agent_api.ingest.qdrant_store import (
     _client as qdrant_client_factory,
@@ -68,6 +70,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(SecurityHeadersMiddleware)
+
 
 # ---------- Auth ----------
 
@@ -80,7 +84,7 @@ def require_auth(
         if not authorization.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="Authorization must use Bearer scheme")
         token = authorization.removeprefix("Bearer ").strip()
-        if token != settings.agent_api_token:
+        if not hmac.compare_digest(token, settings.agent_api_token):
             raise HTTPException(status_code=401, detail="Invalid token")
         return "bearer"
     if session is not None:
@@ -278,7 +282,7 @@ async def login(
             detail=f"Too many attempts. Try again in {retry_after}s.",
             headers={"Retry-After": str(retry_after)},
         )
-    if request.token != settings.agent_api_token:
+    if not hmac.compare_digest(request.token, settings.agent_api_token):
         raise HTTPException(status_code=401, detail="Invalid token")
     login_limiter.reset(client_ip)
     new_session = session_store.create()
