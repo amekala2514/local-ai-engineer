@@ -17,6 +17,16 @@ machine, with the API bound to `127.0.0.1` and accessed via a web
 browser on the same machine. Models, embeddings, vector DB, and
 conversation storage all live on the same host.
 
+Specifically: Qdrant runs in Docker and is bound to `127.0.0.1:6333`,
+unauthenticated. Ollama runs host-native on `127.0.0.1:11434`,
+unauthenticated. SQLite for conversation history lives on the local
+filesystem with no encryption at rest. These services are reachable
+only from the local machine in the default Docker Compose / dev
+setup; none of them are exposed on the LAN. These are acceptable
+defaults only because of the localhost binding — any deployment that
+exposes the Agent API beyond localhost must reconsider each of
+these boundaries.
+
 **Trust boundaries:**
 
 1. **Trusted:** the user, the user's browser, the user's machine,
@@ -49,6 +59,19 @@ inference to anyone who can scan the network.
 a weak token, brute force is possible despite rate limiting. The user
 must choose a strong token (32+ random chars) and avoid `0.0.0.0`
 unless behind a firewall.
+
+**Auth design note.** There are two credentials in the system: the
+bearer token stored in `.env` (long-lived, manually rotated), and the
+session cookie issued after browser login (short-lived, server-side
+session table). The bearer token is the root credential — anyone with
+it can issue themselves new sessions. There is no built-in token rotation,
+expiry, or revocation. Compromise recovery is "change `.env`,
+restart, and any existing sessions become invalid." There is no
+authorization model beyond "whoever holds the token is the user";
+there are no roles, scopes, or per-feature permissions. The
+OpenAPI/Swagger docs at `/docs` are not auth-gated; under the
+localhost-only assumption, exposing schema there is acceptable but
+must be reconsidered for any non-localhost deployment.
 
 ### T2: Prompt injection from uploaded documents
 
@@ -174,6 +197,55 @@ compromised dependency could exfiltrate data or take other actions.
 project depending on external packages. Users running in sensitive
 environments should review the dependency list and consider running
 in containers.
+
+Ollama model files are also part of the supply chain. Models pulled
+from `ollama.com` execute as PyTorch/GGUF binaries inside the Ollama
+process; users are trusting both the model weights and the Ollama
+runtime to behave benignly. The same caution that applies to PyPI
+packages applies here.
+
+### T9: Browser-side risks (CORS, CSRF, XSS)
+
+The browser UI is the only client today and shares an origin with
+the Agent API. This shapes which web-attack categories are real and
+which are deferred.
+
+**Cross-Origin Resource Sharing (CORS).** CORS is intentionally not
+enabled. Same-origin policy prevents other websites from issuing
+authenticated requests to the API via the user's browser. This is
+the correct default for a single-origin app. Adding CORS later
+(e.g., to support a separate frontend host) would require a real
+allowlist, not a wildcard.
+
+**Cross-Site Request Forgery (CSRF).** No explicit CSRF defenses
+are in place. The system relies on same-origin policy and the
+`SameSite=strict` cookie attribute, which prevent cross-origin
+requests from including the session cookie. CSRF defenses would
+need to be added if the API were ever exposed via a reverse proxy
+or used by a mobile/native client.
+
+**Cross-Site Scripting (XSS) from LLM output.** The chat UI renders
+LLM responses as markdown using marked.js, then sanitizes the
+resulting HTML with DOMPurify before insertion into the DOM. LLM
+output is untrusted content — it could contain crafted HTML, scripts,
+or event handlers — so we treat it as we would any untrusted source.
+DOMPurify strips dangerous tags (`script`, `iframe`, `object`, etc.)
+and dangerous attributes (`onerror`, `onload`, `javascript:` URIs).
+The Content-Security-Policy adds a second layer: script-src does
+not include `'unsafe-inline'`, so even if DOMPurify failed, inline
+scripts in LLM output would not execute. Sanitized fetch_url output
+is plain text by design and cannot reintroduce HTML.
+
+**XSS from uploaded documents.** Document text is shown to the LLM
+but not rendered as HTML in the browser. PDF and markdown content
+is parsed and embedded as text only; raw HTML in source documents
+is treated as content, not markup.
+
+**Residual risk.** A determined LLM-driven prompt-injection attack
+could produce output that exploits a marked.js bug or bypasses the
+CSP. This risk is bounded by CSP, by the lack of sensitive cookies
+accessible to JavaScript (HTTP-only), and by the local-only
+deployment assumption.
 
 ## Threats explicitly out of scope
 

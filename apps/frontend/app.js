@@ -90,7 +90,15 @@
   }
 
   function renderMarkdown(text) {
-    if (window.marked) return marked.parse(text);
+    if (window.marked) {
+      const html = marked.parse(text);
+      // Sanitize LLM-generated HTML to prevent XSS. The LLM produces untrusted
+      // content; we strip dangerous tags/attributes before insertion into DOM.
+      if (window.DOMPurify) {
+        return DOMPurify.sanitize(html);
+      }
+      return html;  // Fallback only if DOMPurify failed to load
+    }
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML.replace(/\n/g, '<br>');
