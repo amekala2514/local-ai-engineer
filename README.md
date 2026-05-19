@@ -39,6 +39,7 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 ### Phase B — Smart Assistant (in progress)
 - [x] Day 14: Reranking + input limits + login rate limiting
 - [x] Day 15: Hardening pass + open-source readiness (LICENSE, SECURITY, CONTRIBUTING)
+- [x] Day 16a: URL fetching with SSRF defense + HTML sanitization (endpoint only) + DOMPurify XSS defense
 - [ ] Day 15: Dedicated hardening (threat model, audit pass)
 - [ ] Days 16-17: User-provided URL fetching with prompt-injection defense
 - [ ] Days 18-19: Web search with prompt-injection defense
