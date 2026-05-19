@@ -30,6 +30,7 @@ from agent_api.auth.rate_limit import login_limiter
 from agent_api.middleware.security_headers import SecurityHeadersMiddleware
 from agent_api.web.fetcher import FetchError, fetch_url as _fetch_url
 from agent_api.web.sanitizer import sanitize_response
+from agent_api.web.prompt import build_untrusted_url_prompt
 from agent_api.web.validator import validate_url
 from agent_api.ingest.async_runner import ingest_file_async
 from agent_api.ingest.qdrant_store import (
@@ -144,6 +145,11 @@ class ChatRequest(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     conversation_id: str | None = Field(default=None, max_length=64)
     collection_id: str | None = Field(default=None, max_length=64)
+    attached_url: str | None = Field(
+        default=None,
+        max_length=2048,
+        description="Optional URL to fetch and include as untrusted reference content",
+    )
 
 
 class ChatReply(BaseModel):
@@ -252,6 +258,33 @@ def _build_messages_with_rag(
             continue
         out.append(m)
     return out
+
+
+async def _maybe_fetch_url(url: str | None) -> dict | None:
+    """If a URL is attached, fetch and sanitize it. Returns a context dict or None.
+
+    Returned dict shape:
+        {"url": <final url after redirects>, "title": str|None,
+         "content": <sanitized text>, "truncated": bool}
+
+    Returns None if no URL is attached. Raises HTTPException(400) on validation
+    or fetch failure — the caller propagates this to the client so the user can
+    correct the URL.
+    """
+    if not url:
+        return None
+    try:
+        fetched = await _fetch_url(url)
+    except FetchError as e:
+        raise HTTPException(status_code=400, detail=f"URL fetch failed: {e}") from e
+
+    result = sanitize_response(fetched.content_type, fetched.body, fetched.encoding)
+    return {
+        "url": fetched.url,
+        "title": result.title,
+        "content": result.text,
+        "truncated": result.truncated,
+    }
 
 
 async def _maybe_retrieve(
@@ -557,6 +590,9 @@ async def regenerate_last(
     ]
 
     rag_context = await _maybe_retrieve(conv.collection_id, last_user.content)
+    # Regenerate doesn't re-fetch URLs (the original turn had its web context if any).
+    # web_context stays None so the source-construction block below skips URL append.
+    web_context = None
     messages = _build_messages_with_rag(rag_context, history_msgs[:-1], last_user.content)
     messages.append(ChatMessage(role="user", content=last_user.content))
 
@@ -577,6 +613,15 @@ async def regenerate_last(
         role="assistant", content=response.content, model=response.model,
     )
 
+    sources = [_chunk_to_source_dict(c) for c in rag_context.chunks] if rag_context else []
+    if web_context is not None:
+        sources.append({
+            "type": "url",
+            "url": web_context["url"],
+            "title": web_context["title"],
+            "truncated": web_context["truncated"],
+        })
+
     return ChatReply(
         reply=response.content,
         model_used=response.model,
@@ -584,7 +629,7 @@ async def regenerate_last(
         routing_reason=decision.reason,
         conversation_id=conversation_id,
         rag_used=rag_context is not None,
-        sources=[_chunk_to_source_dict(c) for c in rag_context.chunks] if rag_context else [],
+        sources=sources,
     )
 
 
@@ -606,7 +651,18 @@ async def chat(
         storage, tenant_id, conversation_id, request.system_prompt, request.message
     )
     rag_context = await _maybe_retrieve(collection_id, request.message)
+    web_context = await _maybe_fetch_url(request.attached_url)
     messages = _build_messages_with_rag(rag_context, history[:-1], request.message)
+    # Untrusted web content prepended as its own system message so its
+    # framing isn't conflated with the trusted system prompt above.
+    if web_context is not None:
+        messages.insert(
+            0 if rag_context is None else 1,
+            ChatMessage(
+                role="system",
+                content=build_untrusted_url_prompt(web_context["url"], web_context["content"]),
+            ),
+        )
     messages.append(ChatMessage(role="user", content=request.message))
 
     decision = pick_model(request.task_type, request.message)
@@ -641,6 +697,15 @@ async def chat(
             chunk_ids=[c.source_file for c in rag_context.chunks],
         )
 
+    sources = [_chunk_to_source_dict(c) for c in rag_context.chunks] if rag_context else []
+    if web_context is not None:
+        sources.append({
+            "type": "url",
+            "url": web_context["url"],
+            "title": web_context["title"],
+            "truncated": web_context["truncated"],
+        })
+
     return ChatReply(
         reply=response.content,
         model_used=response.model,
@@ -648,7 +713,7 @@ async def chat(
         routing_reason=decision.reason,
         conversation_id=conversation_id,
         rag_used=rag_context is not None,
-        sources=[_chunk_to_source_dict(c) for c in rag_context.chunks] if rag_context else [],
+        sources=sources,
     )
 
 
@@ -667,7 +732,16 @@ async def chat_stream(
         storage, tenant_id, conversation_id, request.system_prompt, request.message
     )
     rag_context = await _maybe_retrieve(collection_id, request.message)
+    web_context = await _maybe_fetch_url(request.attached_url)
     messages = _build_messages_with_rag(rag_context, history[:-1], request.message)
+    if web_context is not None:
+        messages.insert(
+            0 if rag_context is None else 1,
+            ChatMessage(
+                role="system",
+                content=build_untrusted_url_prompt(web_context["url"], web_context["content"]),
+            ),
+        )
     messages.append(ChatMessage(role="user", content=request.message))
 
     decision = pick_model(request.task_type, request.message)
@@ -681,6 +755,13 @@ async def chat_stream(
         sources = []
         if rag_context:
             sources = [_chunk_to_source_dict(c) for c in rag_context.chunks]
+        if web_context is not None:
+            sources.append({
+                "type": "url",
+                "url": web_context["url"],
+                "title": web_context["title"],
+                "truncated": web_context["truncated"],
+            })
         meta = {
             "conversation_id": conversation_id,
             "model": decision.model,

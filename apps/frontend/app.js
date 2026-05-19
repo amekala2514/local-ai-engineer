@@ -49,6 +49,10 @@
     uploadArea: document.getElementById('upload-area'),
     uploadInput: document.getElementById('upload-input'),
     uploadStatus: document.getElementById('upload-status'),
+    urlAttach: document.getElementById('url-attach'),
+    urlClear: document.getElementById('url-clear'),
+    urlInput: document.getElementById('url-input'),
+    urlRow: document.getElementById('url-attachment-row'),
     collClose: document.getElementById('collection-close'),
     collDelete: document.getElementById('collection-delete'),
   };
@@ -222,6 +226,28 @@
     sources.forEach((src, i) => {
       const item = document.createElement('div');
       item.className = 'source-item';
+
+      // URL sources get a distinct visual treatment
+      if (src.type === 'url') {
+        item.classList.add('source-url');
+        const header = document.createElement('div');
+        header.className = 'source-item-header';
+        const link = document.createElement('a');
+        link.href = src.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = `[${i + 1}] ${src.title || src.url}`;
+        header.appendChild(link);
+        if (src.truncated) {
+          const trunc = document.createElement('span');
+          trunc.className = 'source-item-location';
+          trunc.textContent = '(truncated)';
+          header.appendChild(trunc);
+        }
+        item.appendChild(header);
+        panel.appendChild(item);
+        return;
+      }
 
       const header = document.createElement('div');
       header.className = 'source-item-header';
@@ -755,13 +781,14 @@
 
   // ---------- Streaming chat ----------
 
-  async function streamChat(message, taskType) {
+  async function streamChat(message, taskType, attachedUrl) {
     state.abortController = new AbortController();
 
     const body = {
       message,
       task_type: taskType,
       conversation_id: state.conversationId,
+      attached_url: attachedUrl,
     };
 
     const response = await apiFetch('/api/chat/stream', {
@@ -867,9 +894,12 @@
     const message = els.messageInput.value.trim();
     if (!message) return;
     const taskType = els.modelPicker.value;
+    const attachedUrl = els.urlInput.value.trim() || null;
 
     addMessage('user', message, null, null, { suppressActions: true });
     els.messageInput.value = '';
+    els.urlInput.value = '';
+    els.urlRow.hidden = true;
     state.autoScroll = true;
 
     state.isStreaming = true;
@@ -878,7 +908,7 @@
     setStatus('Generating…', '');
 
     try {
-      await streamChat(message, taskType);
+      await streamChat(message, taskType, attachedUrl);
       setStatus('Ready', 'ok');
     } catch (e) {
       if (e.name === 'AbortError') setStatus('Stopped', '');
@@ -978,6 +1008,14 @@
     els.collDelete.addEventListener('click', deleteActiveCollection);
     els.logoutButton.addEventListener('click', handleLogout);
     els.themeToggle.addEventListener('click', toggleTheme);
+    els.urlAttach.addEventListener('click', () => {
+      els.urlRow.hidden = false;
+      els.urlInput.focus();
+    });
+    els.urlClear.addEventListener('click', () => {
+      els.urlInput.value = '';
+      els.urlRow.hidden = true;
+    });
     els.messageInput.addEventListener('keydown', handleKeyDown);
 
     document.addEventListener('click', () => closeOpenMenu());

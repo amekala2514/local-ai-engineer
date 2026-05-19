@@ -114,6 +114,10 @@
               placeholder="Message the assistant…"
               rows="2"
               required></textarea>
+            <div id="url-attachment-row" hidden>
+              <input type="url" id="url-input" placeholder="https://..." maxlength="2048">
+              <button type="button" id="url-clear" class="icon-btn" title="Clear URL">✕</button>
+            </div>
             <div class="composer-row">
               <label for="model-picker" class="model-picker-label">
                 <select id="model-picker" name="model">
@@ -123,6 +127,9 @@
                   <option value="code_heavy">Code+ · DeepSeek</option>
                 </select>
               </label>
+              <button type="button" id="url-attach" class="icon-btn" title="Attach URL">
+                <svg class="icon"><use href="#icon-paperclip"/></svg>
+              </button>
               <div class="composer-actions">
                 <button type="button" id="stop-button" class="icon-btn stop-btn" disabled title="Stop">
                   <svg class="icon"><use href="#icon-stop"/></svg>
