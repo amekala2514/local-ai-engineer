@@ -219,6 +219,7 @@ __marimo__/
 
 # Project-specific
 .env
+.env.*
 .env.local
 data/
 *.sqlite

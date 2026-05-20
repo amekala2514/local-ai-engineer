@@ -8,7 +8,7 @@ Manager / GCP Secret Manager via the runtime's environment.
 import os
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -59,6 +59,26 @@ class Settings(BaseSettings):
     reranker_fp16: bool = Field(default=True)
     log_level: str = Field(default="INFO")
     log_format: str = Field(default="json")
+    # Day 18: Brave Search
+    brave_api_key: str = Field(default="")
+    search_enabled: bool = Field(default=False)
+    search_daily_limit: int = Field(default=50)
+    search_idempotency_ttl_seconds: int = Field(default=60)
+    search_result_count: int = Field(default=5)
+    search_timeout_seconds: int = Field(default=8)
+
+    @model_validator(mode="after")
+    def _resolve_relative_paths(self) -> "Settings":
+        """Resolve relative sqlite_path against the .env file's directory.
+
+        Prevents the bug where the database file lands in different
+        locations depending on which CWD uvicorn or a script starts from.
+        Absolute paths are left alone.
+        """
+        sqlite = Path(self.sqlite_path)
+        if not sqlite.is_absolute() and ENV_FILE is not None:
+            self.sqlite_path = str((ENV_FILE.parent / sqlite).resolve())
+        return self
 
 
 settings = Settings()

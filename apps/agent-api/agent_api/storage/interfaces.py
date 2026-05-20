@@ -74,9 +74,60 @@ class MessageStore(ABC):
         raise NotImplementedError
 
 
+@dataclass
+class SearchQueryRecord:
+    """A logged search query — used for audit + rate limit + idempotency."""
+    id: int
+    tenant_id: str
+    query: str
+    query_hash: str
+    result_count: int
+    status: str  # 'ok', 'error', 'cached'
+    error: str | None
+    created_at: datetime
+
+
+class SearchQueryStore(ABC):
+    """Audit + rate-limit + idempotency cache for web search calls.
+
+    All methods scoped by tenant_id so future multi-tenant deployments
+    don't need migration.
+    """
+
+    @abstractmethod
+    async def count_since(self, tenant_id: str, since: datetime) -> int:
+        """Return number of 'ok' or 'cached' queries since `since`. Errors don't count
+        against the rate limit (so a misconfigured Brave key doesn't lock the user out).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def find_cached(
+        self, tenant_id: str, query_hash: str, since: datetime,
+    ) -> SearchQueryRecord | None:
+        """Return the most recent successful query record with this hash since `since`,
+        or None. Used for the 60-second idempotency cache.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def record(
+        self,
+        tenant_id: str,
+        query: str,
+        query_hash: str,
+        result_count: int,
+        status: str,
+        error: str | None = None,
+    ) -> SearchQueryRecord:
+        """Insert an audit row and return it."""
+        raise NotImplementedError
+
+
 class Storage(ABC):
     conversations: ConversationStore
     messages: MessageStore
+    search_queries: SearchQueryStore
 
     @abstractmethod
     async def initialize(self) -> None:

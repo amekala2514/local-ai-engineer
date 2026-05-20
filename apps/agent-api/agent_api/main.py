@@ -31,6 +31,8 @@ from agent_api.middleware.security_headers import SecurityHeadersMiddleware
 from agent_api.web.fetcher import FetchError, fetch_url as _fetch_url
 from agent_api.web.sanitizer import sanitize_response
 from agent_api.web.prompt import build_untrusted_url_prompt
+from agent_api.web.search import SearchError, search as _brave_search
+from agent_api.web.rate_limit import check_daily_limit, compute_query_hash
 from agent_api.web.validator import validate_url
 from agent_api.ingest.async_runner import ingest_file_async
 from agent_api.ingest.qdrant_store import (
@@ -867,6 +869,91 @@ async def fetch_url_endpoint(
         content=result.text,
         truncated=result.truncated,
         content_type=fetched.content_type,
+    )
+
+
+# ---------- Day 18a: Search endpoint ----------
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=400)
+
+
+class SearchResultModel(BaseModel):
+    title: str
+    url: str
+    description: str
+
+
+class SearchResponseModel(BaseModel):
+    query: str
+    results: list[SearchResultModel]
+    current_count: int  # number of queries already made in the last 24h (post-this-call)
+    limit: int          # configured daily limit
+
+
+@app.post("/api/search", response_model=SearchResponseModel)
+async def search_endpoint(
+    request: SearchRequest,
+    _: Annotated[str, Depends(require_auth)],
+    storage: Annotated[Storage, Depends(get_storage)],
+) -> SearchResponseModel:
+    """Run a web search and return sanitized snippets.
+
+    Rate limited per tenant by SEARCH_DAILY_LIMIT. Audit row written
+    for every call (success or error) — error rows do not count
+    against the daily limit so a misconfigured key doesn't lock the
+    user out.
+
+    Results are NOT sent to the LLM by this endpoint. Callers (chat
+    endpoint, Day 18b) decide how to use them.
+    """
+    if not settings.search_enabled:
+        raise HTTPException(status_code=503, detail="Search is disabled (SEARCH_ENABLED=false)")
+    if not isinstance(storage, SQLiteStorage):
+        raise HTTPException(status_code=503, detail="Search requires SQLite storage backend")
+
+    tenant_id = settings.tenant_id
+    query = request.query.strip()
+    query_hash = compute_query_hash(query)
+
+    # Daily limit check before hitting Brave
+    decision = await check_daily_limit(storage.search_queries, tenant_id)
+    if not decision.allow:
+        raise HTTPException(status_code=429, detail=decision.reason or "Rate limit reached")
+
+    try:
+        result = await _brave_search(query)
+    except SearchError as e:
+        # Record error so audit captures it, but DON'T count against daily limit
+        await storage.search_queries.record(
+            tenant_id=tenant_id,
+            query=query,
+            query_hash=query_hash,
+            result_count=0,
+            status="error",
+            error=str(e),
+        )
+        raise HTTPException(status_code=502, detail=f"Search failed: {e}") from e
+
+    # Record successful query (counts against daily limit)
+    await storage.search_queries.record(
+        tenant_id=tenant_id,
+        query=query,
+        query_hash=query_hash,
+        result_count=len(result.results),
+        status="ok",
+        error=None,
+    )
+
+    return SearchResponseModel(
+        query=result.query,
+        results=[
+            SearchResultModel(title=r.title, url=r.url, description=r.description)
+            for r in result.results
+        ],
+        current_count=decision.current_count + 1,
+        limit=decision.limit,
     )
 
 

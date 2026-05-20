@@ -10,6 +10,8 @@ from agent_api.storage.interfaces import (
     Conversation,
     ConversationStore,
     MessageStore,
+    SearchQueryRecord,
+    SearchQueryStore,
     Storage,
     StoredMessage,
 )
@@ -56,6 +58,21 @@ CREATE TABLE IF NOT EXISTS retrieval_log (
 
 CREATE INDEX IF NOT EXISTS idx_retrieval_log_conversation
     ON retrieval_log(conversation_id, created_at);
+
+CREATE TABLE IF NOT EXISTS search_queries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL,
+    query TEXT NOT NULL,
+    query_hash TEXT NOT NULL,
+    result_count INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_search_queries_tenant_created
+    ON search_queries(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_queries_tenant_hash_created
+    ON search_queries(tenant_id, query_hash, created_at DESC);
 """
 
 
@@ -238,12 +255,72 @@ class SQLiteMessageStore(MessageStore):
         return cursor.rowcount
 
 
+class SQLiteSearchQueryStore(SearchQueryStore):
+    """SQLite-backed audit + rate-limit + idempotency store for web search."""
+
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self._db = db
+
+    async def count_since(self, tenant_id: str, since: datetime) -> int:
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM search_queries "
+            "WHERE tenant_id = ? AND created_at >= ? AND status IN ('ok', 'cached')",
+            (tenant_id, since.isoformat()),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return int(row[0]) if row else 0
+
+    async def find_cached(
+        self, tenant_id: str, query_hash: str, since: datetime,
+    ) -> SearchQueryRecord | None:
+        async with self._db.execute(
+            "SELECT id, tenant_id, query, query_hash, result_count, status, error, created_at "
+            "FROM search_queries "
+            "WHERE tenant_id = ? AND query_hash = ? AND created_at >= ? AND status = 'ok' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (tenant_id, query_hash, since.isoformat()),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            return SearchQueryRecord(
+                id=row[0], tenant_id=row[1], query=row[2], query_hash=row[3],
+                result_count=row[4], status=row[5], error=row[6],
+                created_at=_parse_iso(row[7]),
+            )
+
+    async def record(
+        self,
+        tenant_id: str,
+        query: str,
+        query_hash: str,
+        result_count: int,
+        status: str,
+        error: str | None = None,
+    ) -> SearchQueryRecord:
+        created_at = _now_iso()
+        cursor = await self._db.execute(
+            "INSERT INTO search_queries "
+            "(tenant_id, query, query_hash, result_count, status, error, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (tenant_id, query, query_hash, result_count, status, error, created_at),
+        )
+        await self._db.commit()
+        return SearchQueryRecord(
+            id=cursor.lastrowid or 0,
+            tenant_id=tenant_id, query=query, query_hash=query_hash,
+            result_count=result_count, status=status, error=error,
+            created_at=_parse_iso(created_at),
+        )
+
+
 class SQLiteStorage(Storage):
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._db: aiosqlite.Connection | None = None
         self.conversations: SQLiteConversationStore = None  # type: ignore[assignment]
         self.messages: SQLiteMessageStore = None  # type: ignore[assignment]
+        self.search_queries: SQLiteSearchQueryStore = None  # type: ignore[assignment]
 
     async def initialize(self) -> None:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -252,6 +329,7 @@ class SQLiteStorage(Storage):
         await self._db.commit()
         self.conversations = SQLiteConversationStore(self._db)
         self.messages = SQLiteMessageStore(self._db, self.conversations)
+        self.search_queries = SQLiteSearchQueryStore(self._db)
 
     async def close(self) -> None:
         if self._db is not None:
