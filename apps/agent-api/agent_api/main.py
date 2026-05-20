@@ -30,7 +30,7 @@ from agent_api.auth.rate_limit import login_limiter
 from agent_api.middleware.security_headers import SecurityHeadersMiddleware
 from agent_api.web.fetcher import FetchError, fetch_url as _fetch_url
 from agent_api.web.sanitizer import sanitize_response
-from agent_api.web.prompt import build_untrusted_url_prompt
+from agent_api.web.prompt import build_untrusted_url_prompt, build_search_results_prompt
 from agent_api.web.search import SearchError, search as _brave_search
 from agent_api.web.rate_limit import check_daily_limit, compute_query_hash
 from agent_api.web.validator import validate_url
@@ -151,6 +151,11 @@ class ChatRequest(BaseModel):
         default=None,
         max_length=2048,
         description="Optional URL to fetch and include as untrusted reference content",
+    )
+    search_query: str | None = Field(
+        default=None,
+        max_length=400,
+        description="Optional web search query; top results included as untrusted reference content",
     )
 
 
@@ -654,15 +659,28 @@ async def chat(
     )
     rag_context = await _maybe_retrieve(collection_id, request.message)
     web_context = await _maybe_fetch_url(request.attached_url)
+    search_context = await _run_search(storage, request.search_query) if request.search_query else None
     messages = _build_messages_with_rag(rag_context, history[:-1], request.message)
     # Untrusted web content prepended as its own system message so its
     # framing isn't conflated with the trusted system prompt above.
+    # Insert position grows as we add more untrusted sources; each goes
+    # after the previous so ordering is [RAG][URL][search] before the user turn.
+    _insert_at = 0 if rag_context is None else 1
     if web_context is not None:
         messages.insert(
-            0 if rag_context is None else 1,
+            _insert_at,
             ChatMessage(
                 role="system",
                 content=build_untrusted_url_prompt(web_context["url"], web_context["content"]),
+            ),
+        )
+        _insert_at += 1
+    if search_context is not None:
+        messages.insert(
+            _insert_at,
+            ChatMessage(
+                role="system",
+                content=build_search_results_prompt(search_context["query"], search_context["results"]),
             ),
         )
     messages.append(ChatMessage(role="user", content=request.message))
@@ -707,6 +725,14 @@ async def chat(
             "title": web_context["title"],
             "truncated": web_context["truncated"],
         })
+    if search_context is not None:
+        for _r in search_context["results"]:
+            sources.append({
+                "type": "url",
+                "url": _r["url"],
+                "title": _r["title"],
+                "truncated": False,
+            })
 
     return ChatReply(
         reply=response.content,
@@ -735,13 +761,24 @@ async def chat_stream(
     )
     rag_context = await _maybe_retrieve(collection_id, request.message)
     web_context = await _maybe_fetch_url(request.attached_url)
+    search_context = await _run_search(storage, request.search_query) if request.search_query else None
     messages = _build_messages_with_rag(rag_context, history[:-1], request.message)
+    _insert_at = 0 if rag_context is None else 1
     if web_context is not None:
         messages.insert(
-            0 if rag_context is None else 1,
+            _insert_at,
             ChatMessage(
                 role="system",
                 content=build_untrusted_url_prompt(web_context["url"], web_context["content"]),
+            ),
+        )
+        _insert_at += 1
+    if search_context is not None:
+        messages.insert(
+            _insert_at,
+            ChatMessage(
+                role="system",
+                content=build_search_results_prompt(search_context["query"], search_context["results"]),
             ),
         )
     messages.append(ChatMessage(role="user", content=request.message))
@@ -764,6 +801,14 @@ async def chat_stream(
                 "title": web_context["title"],
                 "truncated": web_context["truncated"],
             })
+        if search_context is not None:
+            for _r in search_context["results"]:
+                sources.append({
+                    "type": "url",
+                    "url": _r["url"],
+                    "title": _r["title"],
+                    "truncated": False,
+                })
         meta = {
             "conversation_id": conversation_id,
             "model": decision.model,
@@ -892,6 +937,53 @@ class SearchResponseModel(BaseModel):
     limit: int          # configured daily limit
 
 
+async def _run_search(storage: Storage, query: str) -> dict:
+    """Run a rate-limited, audited web search. Shared by /api/search and chat.
+
+    Returns {'query', 'results': [{title,url,description}...], 'current_count', 'limit'}.
+
+    Raises HTTPException on: search disabled (503), wrong backend (503),
+    rate limit (429), or Brave error (502). Callers propagate these so the
+    user sees a clear error rather than a silently search-less response.
+    """
+    if not settings.search_enabled:
+        raise HTTPException(status_code=503, detail="Search is disabled (SEARCH_ENABLED=false)")
+    if not isinstance(storage, SQLiteStorage):
+        raise HTTPException(status_code=503, detail="Search requires SQLite storage backend")
+
+    tenant_id = settings.tenant_id
+    query = query.strip()
+    query_hash = compute_query_hash(query)
+
+    decision = await check_daily_limit(storage.search_queries, tenant_id)
+    if not decision.allow:
+        raise HTTPException(status_code=429, detail=decision.reason or "Rate limit reached")
+
+    try:
+        result = await _brave_search(query)
+    except SearchError as e:
+        await storage.search_queries.record(
+            tenant_id=tenant_id, query=query, query_hash=query_hash,
+            result_count=0, status="error", error=str(e),
+        )
+        raise HTTPException(status_code=502, detail=f"Search failed: {e}") from e
+
+    await storage.search_queries.record(
+        tenant_id=tenant_id, query=query, query_hash=query_hash,
+        result_count=len(result.results), status="ok", error=None,
+    )
+
+    return {
+        "query": result.query,
+        "results": [
+            {"title": r.title, "url": r.url, "description": r.description}
+            for r in result.results
+        ],
+        "current_count": decision.current_count + 1,
+        "limit": decision.limit,
+    }
+
+
 @app.post("/api/search", response_model=SearchResponseModel)
 async def search_endpoint(
     request: SearchRequest,
@@ -900,60 +992,18 @@ async def search_endpoint(
 ) -> SearchResponseModel:
     """Run a web search and return sanitized snippets.
 
-    Rate limited per tenant by SEARCH_DAILY_LIMIT. Audit row written
-    for every call (success or error) — error rows do not count
-    against the daily limit so a misconfigured key doesn't lock the
-    user out.
-
-    Results are NOT sent to the LLM by this endpoint. Callers (chat
-    endpoint, Day 18b) decide how to use them.
+    Rate limited per tenant by SEARCH_DAILY_LIMIT. Results are NOT sent to
+    the LLM by this endpoint — callers decide how to use them. Chat
+    integration calls the shared _run_search helper directly.
     """
-    if not settings.search_enabled:
-        raise HTTPException(status_code=503, detail="Search is disabled (SEARCH_ENABLED=false)")
-    if not isinstance(storage, SQLiteStorage):
-        raise HTTPException(status_code=503, detail="Search requires SQLite storage backend")
-
-    tenant_id = settings.tenant_id
-    query = request.query.strip()
-    query_hash = compute_query_hash(query)
-
-    # Daily limit check before hitting Brave
-    decision = await check_daily_limit(storage.search_queries, tenant_id)
-    if not decision.allow:
-        raise HTTPException(status_code=429, detail=decision.reason or "Rate limit reached")
-
-    try:
-        result = await _brave_search(query)
-    except SearchError as e:
-        # Record error so audit captures it, but DON'T count against daily limit
-        await storage.search_queries.record(
-            tenant_id=tenant_id,
-            query=query,
-            query_hash=query_hash,
-            result_count=0,
-            status="error",
-            error=str(e),
-        )
-        raise HTTPException(status_code=502, detail=f"Search failed: {e}") from e
-
-    # Record successful query (counts against daily limit)
-    await storage.search_queries.record(
-        tenant_id=tenant_id,
-        query=query,
-        query_hash=query_hash,
-        result_count=len(result.results),
-        status="ok",
-        error=None,
-    )
-
+    data = await _run_search(storage, request.query)
     return SearchResponseModel(
-        query=result.query,
+        query=data["query"],
         results=[
-            SearchResultModel(title=r.title, url=r.url, description=r.description)
-            for r in result.results
+            SearchResultModel(**r) for r in data["results"]
         ],
-        current_count=decision.current_count + 1,
-        limit=decision.limit,
+        current_count=data["current_count"],
+        limit=data["limit"],
     )
 
 

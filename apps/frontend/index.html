@@ -43,6 +43,10 @@
       <symbol id="icon-paperclip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
       </symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="7"/>
+        <path d="M21 21l-4.35-4.35"/>
+      </symbol>
       <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
         <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
@@ -114,6 +118,10 @@
               placeholder="Message the assistant…"
               rows="2"
               required></textarea>
+            <div id="search-row" hidden>
+              <input type="text" id="search-input" placeholder="Search the web for…" maxlength="400">
+              <button type="button" id="search-clear" class="icon-btn" title="Clear search">✕</button>
+            </div>
             <div id="url-attachment-row" hidden>
               <input type="url" id="url-input" placeholder="https://..." maxlength="2048">
               <button type="button" id="url-clear" class="icon-btn" title="Clear URL">✕</button>
@@ -129,6 +137,9 @@
               </label>
               <button type="button" id="url-attach" class="icon-btn" title="Attach URL">
                 <svg class="icon"><use href="#icon-paperclip"/></svg>
+              </button>
+              <button type="button" id="search-toggle" class="icon-btn" title="Search the web">
+                <svg class="icon"><use href="#icon-search"/></svg>
               </button>
               <div class="composer-actions">
                 <button type="button" id="stop-button" class="icon-btn stop-btn" disabled title="Stop">

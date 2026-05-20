@@ -53,6 +53,10 @@
     urlClear: document.getElementById('url-clear'),
     urlInput: document.getElementById('url-input'),
     urlRow: document.getElementById('url-attachment-row'),
+    searchToggle: document.getElementById('search-toggle'),
+    searchClear: document.getElementById('search-clear'),
+    searchInput: document.getElementById('search-input'),
+    searchRow: document.getElementById('search-row'),
     collClose: document.getElementById('collection-close'),
     collDelete: document.getElementById('collection-delete'),
   };
@@ -781,7 +785,7 @@
 
   // ---------- Streaming chat ----------
 
-  async function streamChat(message, taskType, attachedUrl) {
+  async function streamChat(message, taskType, attachedUrl, searchQuery) {
     state.abortController = new AbortController();
 
     const body = {
@@ -789,6 +793,7 @@
       task_type: taskType,
       conversation_id: state.conversationId,
       attached_url: attachedUrl,
+      search_query: searchQuery,
     };
 
     const response = await apiFetch('/api/chat/stream', {
@@ -895,11 +900,14 @@
     if (!message) return;
     const taskType = els.modelPicker.value;
     const attachedUrl = els.urlInput.value.trim() || null;
+    const searchQuery = els.searchInput.value.trim() || null;
 
     addMessage('user', message, null, null, { suppressActions: true });
     els.messageInput.value = '';
     els.urlInput.value = '';
     els.urlRow.hidden = true;
+    els.searchInput.value = '';
+    els.searchRow.hidden = true;
     state.autoScroll = true;
 
     state.isStreaming = true;
@@ -908,7 +916,7 @@
     setStatus('Generating…', '');
 
     try {
-      await streamChat(message, taskType, attachedUrl);
+      await streamChat(message, taskType, attachedUrl, searchQuery);
       setStatus('Ready', 'ok');
     } catch (e) {
       if (e.name === 'AbortError') setStatus('Stopped', '');
@@ -1015,6 +1023,14 @@
     els.urlClear.addEventListener('click', () => {
       els.urlInput.value = '';
       els.urlRow.hidden = true;
+    });
+    els.searchToggle.addEventListener('click', () => {
+      els.searchRow.hidden = false;
+      els.searchInput.focus();
+    });
+    els.searchClear.addEventListener('click', () => {
+      els.searchInput.value = '';
+      els.searchRow.hidden = true;
     });
     els.messageInput.addEventListener('keydown', handleKeyDown);
 
