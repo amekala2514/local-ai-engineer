@@ -43,9 +43,6 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Day 16b: URL fetching wired to chat with untrusted-content framing
 - [x] Day 18a: Brave Search backend with daily limit + audit (no chat integration yet)
 - [x] Day 18b: Web search wired to chat with untrusted-content framing + strict citations
-- [ ] Day 15: Dedicated hardening (threat model, audit pass)
-- [ ] Days 16-17: User-provided URL fetching with prompt-injection defense
-- [ ] Days 18-19: Web search with prompt-injection defense
 - [ ] Days 20-22: Cross-conversation memory
 - [ ] Day 23: File generation (Markdown, PDF)
 - [ ] Days 24-25: Query rewriting / HyDE
@@ -83,6 +80,10 @@ Then visit \`http://localhost:8000/\` and sign in with the bearer token from you
 
 See the directory layout in \`/apps\`, \`/configs\`, \`/data\`, \`/docs\`, \`/evals\`, \`/infra\`, and \`/scripts\`. The roadmap is documented in \`/docs/roadmap_index.md\` with detail per phase in the same directory.
 
+## Acknowledgments
+
+Web search is powered by the [Brave Search API](https://brave.com/search/api/).
+
 ## License
 
-MIT
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
