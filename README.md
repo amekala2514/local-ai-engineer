@@ -41,6 +41,7 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Day 15: Hardening pass + open-source readiness (LICENSE, SECURITY, CONTRIBUTING)
 - [x] Day 16a: URL fetching with SSRF defense + HTML sanitization (endpoint only) + DOMPurify XSS defense
 - [x] Day 16b: URL fetching wired to chat with untrusted-content framing
+- [x] Day 18a: Brave Search backend with daily limit + audit (no chat integration yet)
 - [ ] Day 15: Dedicated hardening (threat model, audit pass)
 - [ ] Days 16-17: User-provided URL fetching with prompt-injection defense
 - [ ] Days 18-19: Web search with prompt-injection defense
