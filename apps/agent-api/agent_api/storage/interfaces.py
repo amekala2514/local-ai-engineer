@@ -182,11 +182,51 @@ class RequestMetricsStore(ABC):
         raise NotImplementedError
 
 
+@dataclass
+class MemoryEntryRecord:
+    """Metadata for one stored turn-pair memory. The text lives in Qdrant;
+    this row links to it via qdrant_point_id and supports stats + future
+    pruning (option b) without scanning the vector store."""
+    id: int
+    tenant_id: str
+    conversation_id: str
+    turn_index: int
+    qdrant_point_id: str
+    char_count: int
+    created_at: datetime
+
+
+class MemoryEntryStore(ABC):
+    """Metadata index for cross-conversation memory entries. Scoped by tenant_id.
+
+    Mirrors what's upserted to the Qdrant 'memory' collection. The vector store
+    does similarity search; this is the source of truth for what exists.
+    """
+
+    @abstractmethod
+    async def record(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        turn_index: int,
+        qdrant_point_id: str,
+        char_count: int,
+    ) -> MemoryEntryRecord:
+        """Insert a memory-entry row and return it."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def count(self, tenant_id: str) -> int:
+        """Total memory entries for the tenant."""
+        raise NotImplementedError
+
+
 class Storage(ABC):
     conversations: ConversationStore
     messages: MessageStore
     search_queries: SearchQueryStore
     request_metrics: RequestMetricsStore
+    memory_entries: MemoryEntryStore
 
     @abstractmethod
     async def initialize(self) -> None:

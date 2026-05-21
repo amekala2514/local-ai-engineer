@@ -32,6 +32,7 @@ from agent_api.middleware.security_headers import SecurityHeadersMiddleware
 from agent_api.web.fetcher import FetchError, fetch_url as _fetch_url
 from agent_api.web.sanitizer import sanitize_response
 from agent_api.web.prompt import build_untrusted_url_prompt, build_search_results_prompt
+from agent_api.memory.writer import remember_turn_pair
 from agent_api.web.search import SearchError, search as _brave_search
 from agent_api.web.rate_limit import check_daily_limit, compute_query_hash
 from agent_api.web.validator import validate_url
@@ -751,6 +752,14 @@ async def chat(
             duration_ms=(response.total_duration_ns // 1_000_000)
             if response.total_duration_ns is not None else None,
         )
+        await remember_turn_pair(
+            storage=storage,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            turn_index=0,
+            user_text=request.message,
+            assistant_text=response.content,
+        )
 
     return ChatReply(
         reply=response.content,
@@ -893,6 +902,14 @@ async def chat_stream(
                     completion_tokens=final_completion_tokens,
                     duration_ms=(final_duration_ns // 1_000_000)
                     if final_duration_ns is not None else None,
+                )
+                await remember_turn_pair(
+                    storage=storage,
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    turn_index=0,
+                    user_text=request.message,
+                    assistant_text=full_reply,
                 )
 
             yield "data: [DONE]\n\n"

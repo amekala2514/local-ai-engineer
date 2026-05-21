@@ -9,6 +9,8 @@ import aiosqlite
 from agent_api.storage.interfaces import (
     Conversation,
     ConversationStore,
+    MemoryEntryRecord,
+    MemoryEntryStore,
     MessageStore,
     RequestMetricsRecord,
     RequestMetricsStore,
@@ -95,6 +97,19 @@ CREATE INDEX IF NOT EXISTS idx_request_metrics_tenant_created
     ON request_metrics(tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_request_metrics_tenant_model_created
     ON request_metrics(tenant_id, model, created_at DESC);
+CREATE TABLE IF NOT EXISTS memory_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    turn_index INTEGER NOT NULL,
+    qdrant_point_id TEXT NOT NULL,
+    char_count INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_entries_tenant_conversation
+    ON memory_entries(tenant_id, conversation_id);
+CREATE INDEX IF NOT EXISTS idx_memory_entries_tenant_created
+    ON memory_entries(tenant_id, created_at DESC);
 """
 
 
@@ -410,6 +425,44 @@ class SQLiteRequestMetricsStore(RequestMetricsStore):
             ]
 
 
+class SQLiteMemoryEntryStore(MemoryEntryStore):
+    """SQLite-backed metadata index for cross-conversation memory entries."""
+
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self._db = db
+
+    async def record(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        turn_index: int,
+        qdrant_point_id: str,
+        char_count: int,
+    ) -> MemoryEntryRecord:
+        created_at = _now_iso()
+        cursor = await self._db.execute(
+            "INSERT INTO memory_entries "
+            "(tenant_id, conversation_id, turn_index, qdrant_point_id, char_count, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (tenant_id, conversation_id, turn_index, qdrant_point_id, char_count, created_at),
+        )
+        await self._db.commit()
+        return MemoryEntryRecord(
+            id=cursor.lastrowid or 0,
+            tenant_id=tenant_id, conversation_id=conversation_id,
+            turn_index=turn_index, qdrant_point_id=qdrant_point_id,
+            char_count=char_count, created_at=_parse_iso(created_at),
+        )
+
+    async def count(self, tenant_id: str) -> int:
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM memory_entries WHERE tenant_id = ?",
+            (tenant_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return int(row[0]) if row else 0
+
+
 class SQLiteStorage(Storage):
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
@@ -418,6 +471,7 @@ class SQLiteStorage(Storage):
         self.messages: SQLiteMessageStore = None  # type: ignore[assignment]
         self.search_queries: SQLiteSearchQueryStore = None  # type: ignore[assignment]
         self.request_metrics: SQLiteRequestMetricsStore = None  # type: ignore[assignment]
+        self.memory_entries: SQLiteMemoryEntryStore = None  # type: ignore[assignment]
 
     async def initialize(self) -> None:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -428,6 +482,7 @@ class SQLiteStorage(Storage):
         self.messages = SQLiteMessageStore(self._db, self.conversations)
         self.search_queries = SQLiteSearchQueryStore(self._db)
         self.request_metrics = SQLiteRequestMetricsStore(self._db)
+        self.memory_entries = SQLiteMemoryEntryStore(self._db)
 
     async def close(self) -> None:
         if self._db is not None:
