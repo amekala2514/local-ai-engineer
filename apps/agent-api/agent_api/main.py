@@ -774,6 +774,14 @@ async def chat(
                 "title": _r["title"],
                 "truncated": False,
             })
+    if memory_context is not None:
+        for _m in memory_context:
+            sources.append({
+                "type": "memory",
+                "user_text": _m.user_text[:200],
+                "assistant_text": _m.assistant_text[:200],
+                "score": _m.score,
+            })
 
     if isinstance(storage, SQLiteStorage):
         await storage.request_metrics.record(
@@ -883,6 +891,14 @@ async def chat_stream(
                     "url": _r["url"],
                     "title": _r["title"],
                     "truncated": False,
+                })
+        if memory_context is not None:
+            for _m in memory_context:
+                sources.append({
+                    "type": "memory",
+                    "user_text": _m.user_text[:200],
+                    "assistant_text": _m.assistant_text[:200],
+                    "score": _m.score,
                 })
         meta = {
             "conversation_id": conversation_id,

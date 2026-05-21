@@ -253,6 +253,27 @@
         return;
       }
 
+      // Memory sources: a recalled exchange from a past conversation.
+      if (src.type === 'memory') {
+        item.classList.add('source-memory');
+        const header = document.createElement('div');
+        header.className = 'source-item-header';
+        header.appendChild(document.createTextNode(`[${i + 1}] From a past conversation`));
+        if (typeof src.score === 'number') {
+          const score = document.createElement('span');
+          score.className = 'source-item-score';
+          score.textContent = src.score.toFixed(3);
+          header.appendChild(score);
+        }
+        item.appendChild(header);
+        const text = document.createElement('div');
+        text.className = 'source-item-text';
+        text.textContent = `You asked: ${src.user_text || ''}\nReply: ${src.assistant_text || ''}`;
+        item.appendChild(text);
+        panel.appendChild(item);
+        return;
+      }
+
       const header = document.createElement('div');
       header.className = 'source-item-header';
       header.appendChild(document.createTextNode(`[${i + 1}] ${src.source_file}`));

@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     search_timeout_seconds: int = Field(default=8)
     # Day 21: Memory (cross-conversation recall)
     memory_enabled: bool = Field(default=True)
+    # Smoke test (Day 22, minimal data) suggests 0.70 may be conservative:
+    # related-but-differently-phrased queries scored 0.57-0.63 (would miss),
+    # while unrelated scored 0.40-0.42 — clear separation gives headroom.
+    # Revisit toward 0.60-0.65 after accumulating real conversation data.
     memory_score_threshold: float = Field(default=0.70)
     memory_top_k: int = Field(default=3)
     memory_fetch_k: int = Field(default=10)
