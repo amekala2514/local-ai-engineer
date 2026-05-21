@@ -124,10 +124,69 @@ class SearchQueryStore(ABC):
         raise NotImplementedError
 
 
+@dataclass
+class RequestMetricsRecord:
+    """A logged chat request — token usage + which context sources fired."""
+    id: int
+    tenant_id: str
+    conversation_id: str | None
+    model: str
+    task_type: str
+    routing_reason: str | None
+    rag_used: bool
+    url_used: bool
+    search_used: bool
+    status: str  # 'completed', 'aborted', 'error'
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    duration_ms: int | None
+    created_at: datetime
+
+
+class RequestMetricsStore(ABC):
+    """Per-request observability metrics. Scoped by tenant_id.
+
+    Records token usage and context-source flags for every chat request.
+    Token/duration fields are None for non-completed requests (aborted or
+    error), because Ollama only emits token counts in the final stream
+    chunk, which aborted/errored requests never reach.
+    """
+
+    @abstractmethod
+    async def record(
+        self,
+        tenant_id: str,
+        conversation_id: str | None,
+        model: str,
+        task_type: str,
+        routing_reason: str | None,
+        rag_used: bool,
+        url_used: bool,
+        search_used: bool,
+        status: str,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        duration_ms: int | None = None,
+    ) -> RequestMetricsRecord:
+        """Insert a metrics row and return it."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def aggregate_since(self, tenant_id: str, since: datetime) -> list[dict]:
+        """Return aggregates since `since`, grouped by
+        (model, status, rag_used, url_used, search_used). Each dict:
+        {model, status, rag_used, url_used, search_used, request_count,
+         total_prompt_tokens, total_completion_tokens, avg_duration_ms}.
+        Powers the /metrics endpoint. Token sums count only completed rows.
+        """
+        raise NotImplementedError
+
+
 class Storage(ABC):
     conversations: ConversationStore
     messages: MessageStore
     search_queries: SearchQueryStore
+    request_metrics: RequestMetricsStore
 
     @abstractmethod
     async def initialize(self) -> None:

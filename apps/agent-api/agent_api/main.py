@@ -7,6 +7,7 @@ on top of the Day 12 file-upload feature set.
 import hmac
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -21,7 +22,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -734,6 +735,23 @@ async def chat(
                 "truncated": False,
             })
 
+    if isinstance(storage, SQLiteStorage):
+        await storage.request_metrics.record(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            model=response.model,
+            task_type=decision.task_type,
+            routing_reason=decision.reason,
+            rag_used=rag_context is not None,
+            url_used=web_context is not None,
+            search_used=search_context is not None,
+            status="completed",
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+            duration_ms=(response.total_duration_ns // 1_000_000)
+            if response.total_duration_ns is not None else None,
+        )
+
     return ChatReply(
         reply=response.content,
         model_used=response.model,
@@ -821,12 +839,19 @@ async def chat_stream(
 
         accumulated: list[str] = []
         final_model = decision.model
+        final_prompt_tokens: int | None = None
+        final_completion_tokens: int | None = None
+        final_duration_ns: int | None = None
         try:
             async for chunk in client.stream_chat(
                 messages=messages, model=decision.model, temperature=request.temperature
             ):
                 accumulated.append(chunk.content)
                 final_model = chunk.model
+                if chunk.done:
+                    final_prompt_tokens = chunk.prompt_tokens
+                    final_completion_tokens = chunk.completion_tokens
+                    final_duration_ns = chunk.total_duration_ns
                 payload = {
                     "content": chunk.content,
                     "model": chunk.model,
@@ -853,8 +878,40 @@ async def chat_stream(
                     chunk_ids=[c.source_file for c in rag_context.chunks],
                 )
 
+            if isinstance(storage, SQLiteStorage):
+                await storage.request_metrics.record(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    model=final_model,
+                    task_type=decision.task_type,
+                    routing_reason=decision.reason,
+                    rag_used=rag_context is not None,
+                    url_used=web_context is not None,
+                    search_used=search_context is not None,
+                    status="completed",
+                    prompt_tokens=final_prompt_tokens,
+                    completion_tokens=final_completion_tokens,
+                    duration_ms=(final_duration_ns // 1_000_000)
+                    if final_duration_ns is not None else None,
+                )
+
             yield "data: [DONE]\n\n"
         except Exception as e:
+            if isinstance(storage, SQLiteStorage):
+                try:
+                    await storage.request_metrics.record(
+                        tenant_id=tenant_id,
+                        conversation_id=conversation_id,
+                        model=decision.model,
+                        task_type=decision.task_type,
+                        routing_reason=decision.reason,
+                        rag_used=rag_context is not None,
+                        url_used=web_context is not None,
+                        search_used=search_context is not None,
+                        status="error",
+                    )
+                except Exception:
+                    pass
             err = {"error": f"{type(e).__name__}: {e}"}
             yield f"data: {json.dumps(err)}\n\n"
             yield "data: [DONE]\n\n"
@@ -1005,6 +1062,68 @@ async def search_endpoint(
         current_count=data["current_count"],
         limit=data["limit"],
     )
+
+
+# ---------- Day 19/O1: Prometheus metrics endpoint ----------
+
+
+def _prom_labels(row: dict) -> str:
+    """Build a Prometheus label set from an aggregate row."""
+    return (
+        f'model="{row["model"]}",'
+        f'status="{row["status"]}",'
+        f'rag="{str(row["rag_used"]).lower()}",'
+        f'url="{str(row["url_used"]).lower()}",'
+        f'search="{str(row["search_used"]).lower()}"'
+    )
+
+
+def format_prometheus(aggregates: list[dict]) -> str:
+    """Render aggregate rows as Prometheus text exposition format.
+
+    Emits all-time counters (the table is the source of truth); Prometheus
+    and Grafana compute rates/windows from these.
+    """
+    lines: list[str] = []
+
+    lines.append("# HELP agent_chat_requests_total Total chat requests recorded.")
+    lines.append("# TYPE agent_chat_requests_total counter")
+    for row in aggregates:
+        lines.append(f'agent_chat_requests_total{{{_prom_labels(row)}}} {row["request_count"]}')
+
+    lines.append("# HELP agent_prompt_tokens_total Total prompt (input) tokens.")
+    lines.append("# TYPE agent_prompt_tokens_total counter")
+    for row in aggregates:
+        lines.append(f'agent_prompt_tokens_total{{{_prom_labels(row)}}} {row["total_prompt_tokens"]}')
+
+    lines.append("# HELP agent_completion_tokens_total Total completion (output) tokens.")
+    lines.append("# TYPE agent_completion_tokens_total counter")
+    for row in aggregates:
+        lines.append(f'agent_completion_tokens_total{{{_prom_labels(row)}}} {row["total_completion_tokens"]}')
+
+    lines.append("# HELP agent_request_duration_ms_avg Average request duration (ms) per group.")
+    lines.append("# TYPE agent_request_duration_ms_avg gauge")
+    for row in aggregates:
+        if row["avg_duration_ms"] is not None:
+            lines.append(f'agent_request_duration_ms_avg{{{_prom_labels(row)}}} {row["avg_duration_ms"]:.1f}')
+
+    return "\n".join(lines) + "\n"
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def metrics_endpoint(
+    storage: Annotated[Storage, Depends(get_storage)],
+) -> str:
+    """Prometheus metrics endpoint. All-time counters from request_metrics.
+
+    Unauthenticated by convention (Prometheus scrapes it); safe on a local
+    single-user bind. Returns empty metric families if no SQLite backend.
+    """
+    if not isinstance(storage, SQLiteStorage):
+        return "# storage backend does not support metrics\n"
+    epoch = datetime.fromtimestamp(0, tz=timezone.utc)
+    aggregates = await storage.request_metrics.aggregate_since(settings.tenant_id, epoch)
+    return format_prometheus(aggregates)
 
 
 # ---------- Static UI ----------

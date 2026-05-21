@@ -61,6 +61,9 @@ class OllamaClient(ModelClient):
             content=data["message"]["content"],
             model=data.get("model", model),
             finish_reason=data.get("done_reason"),
+            prompt_tokens=data.get("prompt_eval_count"),
+            completion_tokens=data.get("eval_count"),
+            total_duration_ns=data.get("total_duration"),
         )
 
     async def stream_chat(
@@ -93,6 +96,10 @@ class OllamaClient(ModelClient):
                     model=data.get("model", model),
                     done=done,
                     finish_reason=data.get("done_reason") if done else None,
+                    # Token counts/duration appear only on the final chunk.
+                    prompt_tokens=data.get("prompt_eval_count") if done else None,
+                    completion_tokens=data.get("eval_count") if done else None,
+                    total_duration_ns=data.get("total_duration") if done else None,
                 )
 
     async def health_check(self) -> bool:

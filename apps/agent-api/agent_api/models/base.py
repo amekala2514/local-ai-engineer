@@ -20,6 +20,9 @@ class ChatResponse:
     content: str
     model: str
     finish_reason: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_duration_ns: int | None = None
 
 
 @dataclass
@@ -30,6 +33,11 @@ class ChatChunk:
     model: str
     done: bool = False
     finish_reason: str | None = None
+    # Token counts and duration arrive ONLY on the final (done=True) chunk;
+    # they are None on every intermediate chunk.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_duration_ns: int | None = None
 
 
 class ModelClient(ABC):

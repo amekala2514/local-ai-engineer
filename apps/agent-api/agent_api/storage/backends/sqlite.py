@@ -10,6 +10,8 @@ from agent_api.storage.interfaces import (
     Conversation,
     ConversationStore,
     MessageStore,
+    RequestMetricsRecord,
+    RequestMetricsStore,
     SearchQueryRecord,
     SearchQueryStore,
     Storage,
@@ -73,6 +75,26 @@ CREATE INDEX IF NOT EXISTS idx_search_queries_tenant_created
     ON search_queries(tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_search_queries_tenant_hash_created
     ON search_queries(tenant_id, query_hash, created_at DESC);
+CREATE TABLE IF NOT EXISTS request_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL,
+    conversation_id TEXT,
+    model TEXT NOT NULL,
+    task_type TEXT NOT NULL,
+    routing_reason TEXT,
+    rag_used INTEGER NOT NULL,
+    url_used INTEGER NOT NULL,
+    search_used INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    duration_ms INTEGER,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_request_metrics_tenant_created
+    ON request_metrics(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_request_metrics_tenant_model_created
+    ON request_metrics(tenant_id, model, created_at DESC);
 """
 
 
@@ -314,6 +336,80 @@ class SQLiteSearchQueryStore(SearchQueryStore):
         )
 
 
+class SQLiteRequestMetricsStore(RequestMetricsStore):
+    """SQLite-backed per-request token + context-source metrics."""
+
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self._db = db
+
+    async def record(
+        self,
+        tenant_id: str,
+        conversation_id: str | None,
+        model: str,
+        task_type: str,
+        routing_reason: str | None,
+        rag_used: bool,
+        url_used: bool,
+        search_used: bool,
+        status: str,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        duration_ms: int | None = None,
+    ) -> RequestMetricsRecord:
+        created_at = _now_iso()
+        cursor = await self._db.execute(
+            "INSERT INTO request_metrics "
+            "(tenant_id, conversation_id, model, task_type, routing_reason, "
+            "rag_used, url_used, search_used, status, prompt_tokens, "
+            "completion_tokens, duration_ms, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                tenant_id, conversation_id, model, task_type, routing_reason,
+                int(rag_used), int(url_used), int(search_used), status,
+                prompt_tokens, completion_tokens, duration_ms, created_at,
+            ),
+        )
+        await self._db.commit()
+        return RequestMetricsRecord(
+            id=cursor.lastrowid or 0,
+            tenant_id=tenant_id, conversation_id=conversation_id,
+            model=model, task_type=task_type, routing_reason=routing_reason,
+            rag_used=rag_used, url_used=url_used, search_used=search_used,
+            status=status, prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens, duration_ms=duration_ms,
+            created_at=_parse_iso(created_at),
+        )
+
+    async def aggregate_since(self, tenant_id: str, since: datetime) -> list[dict]:
+        async with self._db.execute(
+            "SELECT model, status, rag_used, url_used, search_used, "
+            "COUNT(*) AS request_count, "
+            "SUM(prompt_tokens) AS total_prompt_tokens, "
+            "SUM(completion_tokens) AS total_completion_tokens, "
+            "AVG(duration_ms) AS avg_duration_ms "
+            "FROM request_metrics "
+            "WHERE tenant_id = ? AND created_at >= ? "
+            "GROUP BY model, status, rag_used, url_used, search_used",
+            (tenant_id, since.isoformat()),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "model": r[0],
+                    "status": r[1],
+                    "rag_used": bool(r[2]),
+                    "url_used": bool(r[3]),
+                    "search_used": bool(r[4]),
+                    "request_count": int(r[5]),
+                    "total_prompt_tokens": int(r[6]) if r[6] is not None else 0,
+                    "total_completion_tokens": int(r[7]) if r[7] is not None else 0,
+                    "avg_duration_ms": float(r[8]) if r[8] is not None else None,
+                }
+                for r in rows
+            ]
+
+
 class SQLiteStorage(Storage):
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
@@ -321,6 +417,7 @@ class SQLiteStorage(Storage):
         self.conversations: SQLiteConversationStore = None  # type: ignore[assignment]
         self.messages: SQLiteMessageStore = None  # type: ignore[assignment]
         self.search_queries: SQLiteSearchQueryStore = None  # type: ignore[assignment]
+        self.request_metrics: SQLiteRequestMetricsStore = None  # type: ignore[assignment]
 
     async def initialize(self) -> None:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -330,6 +427,7 @@ class SQLiteStorage(Storage):
         self.conversations = SQLiteConversationStore(self._db)
         self.messages = SQLiteMessageStore(self._db, self.conversations)
         self.search_queries = SQLiteSearchQueryStore(self._db)
+        self.request_metrics = SQLiteRequestMetricsStore(self._db)
 
     async def close(self) -> None:
         if self._db is not None:
