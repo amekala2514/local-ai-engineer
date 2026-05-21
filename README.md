@@ -43,6 +43,7 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Day 16b: URL fetching wired to chat with untrusted-content framing
 - [x] Day 18a: Brave Search backend with daily limit + audit (no chat integration yet)
 - [x] Day 18b: Web search wired to chat with untrusted-content framing + strict citations
+- [x] Observability O1: per-request token + context metrics + /metrics endpoint (app-side; full OTel stack deferred to O2/O3)
 - [ ] Days 20-22: Cross-conversation memory
 - [ ] Day 23: File generation (Markdown, PDF)
 - [ ] Days 24-25: Query rewriting / HyDE
