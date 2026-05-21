@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS request_metrics (
     rag_used INTEGER NOT NULL,
     url_used INTEGER NOT NULL,
     search_used INTEGER NOT NULL,
+    memory_used INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL,
     prompt_tokens INTEGER,
     completion_tokens INTEGER,
@@ -368,6 +369,7 @@ class SQLiteRequestMetricsStore(RequestMetricsStore):
         url_used: bool,
         search_used: bool,
         status: str,
+        memory_used: bool = False,
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         duration_ms: int | None = None,
@@ -376,13 +378,13 @@ class SQLiteRequestMetricsStore(RequestMetricsStore):
         cursor = await self._db.execute(
             "INSERT INTO request_metrics "
             "(tenant_id, conversation_id, model, task_type, routing_reason, "
-            "rag_used, url_used, search_used, status, prompt_tokens, "
+            "rag_used, url_used, search_used, memory_used, status, prompt_tokens, "
             "completion_tokens, duration_ms, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 tenant_id, conversation_id, model, task_type, routing_reason,
-                int(rag_used), int(url_used), int(search_used), status,
-                prompt_tokens, completion_tokens, duration_ms, created_at,
+                int(rag_used), int(url_used), int(search_used), int(memory_used),
+                status, prompt_tokens, completion_tokens, duration_ms, created_at,
             ),
         )
         await self._db.commit()
@@ -391,6 +393,7 @@ class SQLiteRequestMetricsStore(RequestMetricsStore):
             tenant_id=tenant_id, conversation_id=conversation_id,
             model=model, task_type=task_type, routing_reason=routing_reason,
             rag_used=rag_used, url_used=url_used, search_used=search_used,
+            memory_used=memory_used,
             status=status, prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens, duration_ms=duration_ms,
             created_at=_parse_iso(created_at),
@@ -398,14 +401,14 @@ class SQLiteRequestMetricsStore(RequestMetricsStore):
 
     async def aggregate_since(self, tenant_id: str, since: datetime) -> list[dict]:
         async with self._db.execute(
-            "SELECT model, status, rag_used, url_used, search_used, "
+            "SELECT model, status, rag_used, url_used, search_used, memory_used, "
             "COUNT(*) AS request_count, "
             "SUM(prompt_tokens) AS total_prompt_tokens, "
             "SUM(completion_tokens) AS total_completion_tokens, "
             "AVG(duration_ms) AS avg_duration_ms "
             "FROM request_metrics "
             "WHERE tenant_id = ? AND created_at >= ? "
-            "GROUP BY model, status, rag_used, url_used, search_used",
+            "GROUP BY model, status, rag_used, url_used, search_used, memory_used",
             (tenant_id, since.isoformat()),
         ) as cursor:
             rows = await cursor.fetchall()
@@ -416,10 +419,11 @@ class SQLiteRequestMetricsStore(RequestMetricsStore):
                     "rag_used": bool(r[2]),
                     "url_used": bool(r[3]),
                     "search_used": bool(r[4]),
-                    "request_count": int(r[5]),
-                    "total_prompt_tokens": int(r[6]) if r[6] is not None else 0,
-                    "total_completion_tokens": int(r[7]) if r[7] is not None else 0,
-                    "avg_duration_ms": float(r[8]) if r[8] is not None else None,
+                    "memory_used": bool(r[5]),
+                    "request_count": int(r[6]),
+                    "total_prompt_tokens": int(r[7]) if r[7] is not None else 0,
+                    "total_completion_tokens": int(r[8]) if r[8] is not None else 0,
+                    "avg_duration_ms": float(r[9]) if r[9] is not None else None,
                 }
                 for r in rows
             ]
@@ -478,11 +482,27 @@ class SQLiteStorage(Storage):
         self._db = await aiosqlite.connect(self._db_path)
         await self._db.executescript(SCHEMA)
         await self._db.commit()
+        await self._migrate_request_metrics_memory_used()
         self.conversations = SQLiteConversationStore(self._db)
         self.messages = SQLiteMessageStore(self._db, self.conversations)
         self.search_queries = SQLiteSearchQueryStore(self._db)
         self.request_metrics = SQLiteRequestMetricsStore(self._db)
         self.memory_entries = SQLiteMemoryEntryStore(self._db)
+
+    async def _migrate_request_metrics_memory_used(self) -> None:
+        """Add memory_used to request_metrics if absent (idempotent migration).
+
+        request_metrics predates the memory feature; existing rows get
+        memory_used=0. Fresh DBs get the column from SCHEMA directly, so this
+        is a no-op there. SQLite ADD COLUMN is fast (no table rewrite).
+        """
+        async with self._db.execute("PRAGMA table_info(request_metrics)") as cur:
+            cols = {row[1] for row in await cur.fetchall()}
+        if "memory_used" not in cols:
+            await self._db.execute(
+                "ALTER TABLE request_metrics ADD COLUMN memory_used INTEGER NOT NULL DEFAULT 0"
+            )
+            await self._db.commit()
 
     async def close(self) -> None:
         if self._db is not None:

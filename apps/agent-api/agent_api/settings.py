@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     search_idempotency_ttl_seconds: int = Field(default=60)
     search_result_count: int = Field(default=5)
     search_timeout_seconds: int = Field(default=8)
+    # Day 21: Memory (cross-conversation recall)
+    memory_enabled: bool = Field(default=True)
+    memory_score_threshold: float = Field(default=0.70)
+    memory_top_k: int = Field(default=3)
+    memory_fetch_k: int = Field(default=10)
 
     @model_validator(mode="after")
     def _resolve_relative_paths(self) -> "Settings":

@@ -33,6 +33,8 @@ from agent_api.web.fetcher import FetchError, fetch_url as _fetch_url
 from agent_api.web.sanitizer import sanitize_response
 from agent_api.web.prompt import build_untrusted_url_prompt, build_search_results_prompt
 from agent_api.memory.writer import remember_turn_pair
+from agent_api.memory.store import search_memory, MemoryHit
+from agent_api.memory.prompt import build_memory_prompt
 from agent_api.web.search import SearchError, search as _brave_search
 from agent_api.web.rate_limit import check_daily_limit, compute_query_hash
 from agent_api.web.validator import validate_url
@@ -308,6 +310,35 @@ async def _maybe_retrieve(
         top_k=5,
         reason="collection_attached",
     )
+
+
+async def _maybe_retrieve_memory(
+    user_message: str,
+    current_conversation_id: str | None,
+) -> list[MemoryHit] | None:
+    """Retrieve relevant past turn-pairs, excluding the current conversation.
+
+    Mirrors _maybe_retrieve (RAG). Returns None when disabled or when nothing
+    clears the similarity threshold, so the endpoint's `is not None` check
+    matches the RAG/URL/search pattern.
+    """
+    if not settings.memory_enabled:
+        return None
+    try:
+        hits = search_memory(
+            query=user_message,
+            tenant_id=settings.tenant_id,
+            exclude_conversation_id=current_conversation_id,
+            top_k=settings.memory_top_k,
+            fetch_k=settings.memory_fetch_k,
+            score_threshold=settings.memory_score_threshold,
+        )
+    except Exception:
+        # Memory is a non-critical enhancement: if the vector store is down
+        # or retrieval fails, proceed without memory rather than failing the
+        # whole chat request. (O2/O3 observability: emit a metric here.)
+        return None
+    return hits or None
 
 
 # ---------- Auth endpoints ----------
@@ -660,14 +691,22 @@ async def chat(
         storage, tenant_id, conversation_id, request.system_prompt, request.message
     )
     rag_context = await _maybe_retrieve(collection_id, request.message)
+    memory_context = await _maybe_retrieve_memory(request.message, conversation_id)
     web_context = await _maybe_fetch_url(request.attached_url)
     search_context = await _run_search(storage, request.search_query) if request.search_query else None
     messages = _build_messages_with_rag(rag_context, history[:-1], request.message)
-    # Untrusted web content prepended as its own system message so its
-    # framing isn't conflated with the trusted system prompt above.
-    # Insert position grows as we add more untrusted sources; each goes
-    # after the previous so ordering is [RAG][URL][search] before the user turn.
+    # Retrieved/external context is prepended as its own system messages so the
+    # framing isn't conflated with the trusted system prompt. Ordering is
+    # [RAG][memory][URL][search] before the user turn — most-trusted (the user's
+    # own docs/past chats) furthest from the user turn, least-trusted (web)
+    # closest. _insert_at grows as each source is added.
     _insert_at = 0 if rag_context is None else 1
+    if memory_context is not None:
+        messages.insert(
+            _insert_at,
+            ChatMessage(role="system", content=build_memory_prompt(memory_context)),
+        )
+        _insert_at += 1
     if web_context is not None:
         messages.insert(
             _insert_at,
@@ -746,6 +785,7 @@ async def chat(
             rag_used=rag_context is not None,
             url_used=web_context is not None,
             search_used=search_context is not None,
+            memory_used=memory_context is not None,
             status="completed",
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
@@ -787,10 +827,18 @@ async def chat_stream(
         storage, tenant_id, conversation_id, request.system_prompt, request.message
     )
     rag_context = await _maybe_retrieve(collection_id, request.message)
+    memory_context = await _maybe_retrieve_memory(request.message, conversation_id)
     web_context = await _maybe_fetch_url(request.attached_url)
     search_context = await _run_search(storage, request.search_query) if request.search_query else None
     messages = _build_messages_with_rag(rag_context, history[:-1], request.message)
+    # Ordering [RAG][memory][URL][search] before the user turn (see chat()).
     _insert_at = 0 if rag_context is None else 1
+    if memory_context is not None:
+        messages.insert(
+            _insert_at,
+            ChatMessage(role="system", content=build_memory_prompt(memory_context)),
+        )
+        _insert_at += 1
     if web_context is not None:
         messages.insert(
             _insert_at,
@@ -897,6 +945,7 @@ async def chat_stream(
                     rag_used=rag_context is not None,
                     url_used=web_context is not None,
                     search_used=search_context is not None,
+                    memory_used=memory_context is not None,
                     status="completed",
                     prompt_tokens=final_prompt_tokens,
                     completion_tokens=final_completion_tokens,
@@ -1091,7 +1140,8 @@ def _prom_labels(row: dict) -> str:
         f'status="{row["status"]}",'
         f'rag="{str(row["rag_used"]).lower()}",'
         f'url="{str(row["url_used"]).lower()}",'
-        f'search="{str(row["search_used"]).lower()}"'
+        f'search="{str(row["search_used"]).lower()}",'
+        f'memory="{str(row["memory_used"]).lower()}"'
     )
 
 

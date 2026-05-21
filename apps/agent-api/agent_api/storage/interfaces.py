@@ -136,6 +136,7 @@ class RequestMetricsRecord:
     rag_used: bool
     url_used: bool
     search_used: bool
+    memory_used: bool
     status: str  # 'completed', 'aborted', 'error'
     prompt_tokens: int | None
     completion_tokens: int | None
@@ -164,6 +165,7 @@ class RequestMetricsStore(ABC):
         url_used: bool,
         search_used: bool,
         status: str,
+        memory_used: bool = False,
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         duration_ms: int | None = None,
