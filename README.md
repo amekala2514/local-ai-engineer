@@ -44,6 +44,8 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Day 18a: Brave Search backend with daily limit + audit (no chat integration yet)
 - [x] Day 18b: Web search wired to chat with untrusted-content framing + strict citations
 - [x] Observability O1: per-request token + context metrics + /metrics endpoint (app-side; full OTel stack deferred to O2/O3)
+- [x] Observability O2: distributed tracing (OpenTelemetry -> Tempo -> Grafana); RAG-stage span breakdown, opt-in
+- [ ] Observability O3: Prometheus dashboards over /metrics, Loki logs, OTel Collector
 - [x] Days 20-22: Cross-conversation memory (storage, write, retrieval, injection, hardening + threat model)
 - [x] Day 23: File generation (Markdown, PDF) — ephemeral export, both formats, MD passthrough + fpdf2 renderer
 - [x] Days 24-25: Query rewriting / HyDE — HyDE enabled for RAG (eval-validated 77%->95%), rewrite built but off
