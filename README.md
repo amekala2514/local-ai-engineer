@@ -47,7 +47,7 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Days 20-22: Cross-conversation memory (storage, write, retrieval, injection, hardening + threat model)
 - [x] Day 23: File generation (Markdown, PDF) — ephemeral export, both formats, MD passthrough + fpdf2 renderer
 - [x] Days 24-25: Query rewriting / HyDE — HyDE enabled for RAG (eval-validated 77%->95%), rewrite built but off
-- [ ] Day 26: Hybrid search (vector + BM25)
+- [x] Day 26: Hybrid search (vector + BM25) — DBSF fusion, eval-validated (0 wrong-source misses on 22; rescued q22)
 - [ ] Day 27: Eval re-baseline and reflection
 
 ### Phase C — Agentic Assistant (planned)
