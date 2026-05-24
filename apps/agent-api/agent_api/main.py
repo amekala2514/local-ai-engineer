@@ -38,6 +38,7 @@ from agent_api.memory.prompt import build_memory_prompt
 from agent_api.files.generate import to_markdown, to_pdf, sanitize_filename
 from agent_api.rag.query_transform import generate_hyde_doc, rewrite_query
 from agent_api.ingest.qdrant_store import hybrid_search
+from agent_api.observability.tracing import setup_tracing, get_tracer
 from agent_api.web.search import SearchError, search as _brave_search
 from agent_api.web.rate_limit import check_daily_limit, compute_query_hash
 from agent_api.web.validator import validate_url
@@ -82,6 +83,10 @@ app = FastAPI(
     version="0.9.0",
     lifespan=lifespan,
 )
+
+# O2: OpenTelemetry tracing. No-op if tracing_enabled is False; degrades
+# silently if Tempo is unreachable — never blocks the app.
+setup_tracing(app)
 
 app.add_middleware(SecurityHeadersMiddleware)
 
@@ -313,28 +318,38 @@ async def _maybe_retrieve(
     # is available but off (it regressed hits in the eval). Both degrade to the
     # original query on failure, so retrieval never breaks. HyDE adds one LLM
     # generation of latency per RAG query — visible in /metrics.
+    tracer = get_tracer()
+
+    # Query transformation (Day 24-25). HyDE embeds a hypothetical answer.
     query = user_message
     if client is not None:
         if settings.hyde_enabled:
-            query = await generate_hyde_doc(user_message, client)
+            with tracer.start_as_current_span("hyde_generation") as span:
+                span.set_attribute("transform", "hyde")
+                span.set_attribute("model", settings.query_transform_model)
+                query = await generate_hyde_doc(user_message, client)
+                span.set_attribute("transformed", query != user_message)
         elif settings.query_rewrite_enabled:
-            query = await rewrite_query(user_message, client)
+            with tracer.start_as_current_span("query_rewrite") as span:
+                span.set_attribute("transform", "rewrite")
+                query = await rewrite_query(user_message, client)
 
-    # Hybrid retrieval (Day 26): dense + BM25 sparse fused with DBSF. The dense
-    # side uses the (HyDE-)transformed query; the sparse side uses the original
-    # message keywords. Eval-validated: 0 wrong-source misses across 22 vs a
-    # genuine miss for both HyDE-alone (q22) and dense-only. Routes to the
-    # hybrid collection only for the corpus that has a sparse-indexed twin;
-    # other collections fall back to dense. Falls back to dense on any error
-    # (non-critical: a hybrid failure must not break RAG).
+    # Hybrid retrieval (Day 26): dense + BM25 sparse fused with DBSF. Falls back
+    # to dense on any error (non-critical: a hybrid failure must not break RAG).
     if settings.hybrid_enabled and collection_id == "phase-a":
         try:
-            chunks = hybrid_search(
-                settings.hybrid_collection,
-                dense_query_text=query,
-                sparse_query_text=user_message,
-                top_k=5,
-            )
+            with tracer.start_as_current_span("retrieve") as span:
+                span.set_attribute("mode", "hybrid_dbsf")
+                span.set_attribute("collection", settings.hybrid_collection)
+                chunks = hybrid_search(
+                    settings.hybrid_collection,
+                    dense_query_text=query,
+                    sparse_query_text=user_message,
+                    top_k=5,
+                )
+                span.set_attribute("result_count", len(chunks))
+                if chunks:
+                    span.set_attribute("top_score", float(chunks[0].score))
             return RetrievalContext(
                 chunks=chunks,
                 collection_id=settings.hybrid_collection,
@@ -346,12 +361,17 @@ async def _maybe_retrieve(
         except Exception:
             pass  # fall through to dense
 
-    return await retrieve_for_query(
-        query=query,
-        collection_id=collection_id,
-        top_k=5,
-        reason="collection_attached",
-    )
+    with tracer.start_as_current_span("retrieve") as span:
+        span.set_attribute("mode", "dense")
+        span.set_attribute("collection", collection_id)
+        ctx = await retrieve_for_query(
+            query=query,
+            collection_id=collection_id,
+            top_k=5,
+            reason="collection_attached",
+        )
+        span.set_attribute("result_count", len(ctx.chunks) if ctx else 0)
+        return ctx
 
 
 async def _maybe_retrieve_memory(
@@ -771,9 +791,16 @@ async def chat(
     decision = pick_model(request.task_type, request.message)
 
     try:
-        response = await client.chat(
-            messages=messages, model=decision.model, temperature=request.temperature
-        )
+        with get_tracer().start_as_current_span("model_chat") as _span:
+            _span.set_attribute("model", decision.model)
+            _span.set_attribute("task_type", decision.task_type)
+            response = await client.chat(
+                messages=messages, model=decision.model, temperature=request.temperature
+            )
+            if response.prompt_tokens is not None:
+                _span.set_attribute("prompt_tokens", response.prompt_tokens)
+            if response.completion_tokens is not None:
+                _span.set_attribute("completion_tokens", response.completion_tokens)
     except Exception as e:
         raise HTTPException(
             status_code=502,

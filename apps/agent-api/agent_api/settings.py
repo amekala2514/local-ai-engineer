@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     hybrid_enabled: bool = Field(default=True)  # Day 26: eval-validated (DBSF, 0 wrong-source misses on 22)
     hybrid_collection: str = Field(default="phase-a-hybrid")
     bm25_idf_path: str = Field(default="data/vector/bm25_idf.json")
+    # O2: Tracing (OpenTelemetry -> Tempo). Off by default; safe-degrade if Tempo down.
+    tracing_enabled: bool = Field(default=False)  # O2: opt-in (TRACING_ENABLED=true). On-by-default taxes requests ~2s when Tempo is down.
+    otlp_traces_endpoint: str = Field(default="http://localhost:4318/v1/traces")
 
     @model_validator(mode="after")
     def _resolve_relative_paths(self) -> "Settings":

@@ -1,0 +1,40 @@
+# Observability stack (O2): Tempo (traces) + Grafana (visualization).
+# Independent of the core docker-compose.yml so it can be toggled separately:
+#   docker compose -f docker-compose.observability.yml up -d
+#
+# The agent-api runs on the HOST (uvicorn), exporting traces to
+# localhost:4318 -> Tempo's published OTLP-HTTP port. Grafana talks to Tempo
+# over the internal compose network by service name.
+services:
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports:
+      - "4318:4318"   # OTLP HTTP (app exports here)
+      - "4317:4317"   # OTLP gRPC
+      - "3200:3200"   # Tempo query API (Grafana queries here)
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"   # 3001 on host (3000 is taken by open-webui)
+    volumes:
+      - ./observability/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    restart: unless-stopped
+    depends_on:
+      - tempo
+
+volumes:
+  tempo-data:
+  grafana-data:
