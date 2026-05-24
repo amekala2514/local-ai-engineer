@@ -25,6 +25,9 @@ sys.path.insert(0, str(_ROOT / "apps" / "agent-api"))
 from agent_api.ingest.embedder import close as close_embedder  # noqa: E402
 from agent_api.ingest.qdrant_store import SearchResult, search  # noqa: E402
 from agent_api.rag.retriever import retrieve_for_query  # noqa: E402
+from agent_api.rag.query_transform import rewrite_query, generate_hyde_doc  # noqa: E402
+from agent_api.models.ollama import OllamaClient  # noqa: E402
+from agent_api.settings import settings  # noqa: E402
 
 
 VERDICT_HIT = "hit"
@@ -177,10 +180,20 @@ def render_report(
     return "\n".join(lines)
 
 
-async def run_one(q: EvalQuestion, collection: str, top_k: int, rerank: bool) -> EvalResult:
+async def _transform(query: str, mode: str, client) -> str:
+    if mode == "rewrite":
+        return await rewrite_query(query, client)
+    if mode == "hyde":
+        return await generate_hyde_doc(query, client)
+    return query
+
+
+async def run_one(q: EvalQuestion, collection: str, top_k: int, rerank: bool,
+                  transform: str = "none", client=None) -> EvalResult:
+    query = await _transform(q.question, transform, client)
     if rerank:
         ctx = await retrieve_for_query(
-            query=q.question,
+            query=query,
             collection_id=collection,
             top_k=top_k,
             reason="eval",
@@ -188,7 +201,7 @@ async def run_one(q: EvalQuestion, collection: str, top_k: int, rerank: bool) ->
         )
         results = ctx.chunks
     else:
-        results = search(collection, q.question, top_k=top_k)
+        results = search(collection, query, top_k=top_k)
     return score_result(q, results)
 
 
@@ -202,10 +215,18 @@ async def main_async(args) -> int:
     rerank_label = "with rerank" if args.rerank else "without rerank"
     print(f"Running {len(questions)} questions {rerank_label} against '{collection}' (top-K={args.top_k})…")
 
+    _client = None
+    if args.transform != "none":
+        host = settings.ollama_host
+        if "host.docker.internal" in host:
+            host = host.replace("host.docker.internal", "localhost")
+        _client = OllamaClient(host=host)
+        print(f"Query transform: {args.transform} (model {settings.query_transform_model})")
     eval_results: list[EvalResult] = []
     try:
         for q in questions:
-            er = await run_one(q, collection, args.top_k, args.rerank)
+            er = await run_one(q, collection, args.top_k, args.rerank,
+                               transform=args.transform, client=_client)
             eval_results.append(er)
             marker = {VERDICT_HIT: "✓", VERDICT_NEAR: "~", VERDICT_MISS: "✗"}[er.verdict]
             print(f"  [{marker}] {q.id}: {er.verdict}")
@@ -218,6 +239,8 @@ async def main_async(args) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     stamp = started_at.strftime("%Y-%m-%dT%H-%M-%SZ")
     suffix = "rerank" if args.rerank else "vector"
+    if args.transform != "none":
+        suffix = f"{suffix}-{args.transform}"
     out_path = args.out / f"{stamp}-{suffix}.md"
     out_path.write_text(report, encoding="utf-8")
 
@@ -242,6 +265,8 @@ def main() -> int:
     parser.add_argument("--collection", default=None)
     parser.add_argument("--no-rerank", dest="rerank", action="store_false", default=True,
                         help="Use plain vector search instead of reranking")
+    parser.add_argument("--transform", choices=["none", "rewrite", "hyde"], default="none",
+                        help="Apply a query transform before retrieval")
     args = parser.parse_args()
     return asyncio.run(main_async(args))
 

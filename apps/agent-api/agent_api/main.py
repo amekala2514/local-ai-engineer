@@ -36,6 +36,7 @@ from agent_api.memory.writer import remember_turn_pair
 from agent_api.memory.store import search_memory, MemoryHit
 from agent_api.memory.prompt import build_memory_prompt
 from agent_api.files.generate import to_markdown, to_pdf, sanitize_filename
+from agent_api.rag.query_transform import generate_hyde_doc, rewrite_query
 from agent_api.web.search import SearchError, search as _brave_search
 from agent_api.web.rate_limit import check_daily_limit, compute_query_hash
 from agent_api.web.validator import validate_url
@@ -302,11 +303,23 @@ async def _maybe_fetch_url(url: str | None) -> dict | None:
 async def _maybe_retrieve(
     collection_id: str | None,
     user_message: str,
+    client: "OllamaClient | None" = None,
 ) -> RetrievalContext | None:
     if not collection_id:
         return None
+    # Query transformation (Day 24-25). HyDE embeds a hypothetical answer
+    # instead of the question (eval: 77% -> 95% hit rate on phase-a). Rewrite
+    # is available but off (it regressed hits in the eval). Both degrade to the
+    # original query on failure, so retrieval never breaks. HyDE adds one LLM
+    # generation of latency per RAG query — visible in /metrics.
+    query = user_message
+    if client is not None:
+        if settings.hyde_enabled:
+            query = await generate_hyde_doc(user_message, client)
+        elif settings.query_rewrite_enabled:
+            query = await rewrite_query(user_message, client)
     return await retrieve_for_query(
-        query=user_message,
+        query=query,
         collection_id=collection_id,
         top_k=5,
         reason="collection_attached",
@@ -691,7 +704,7 @@ async def chat(
     history = await _build_message_history(
         storage, tenant_id, conversation_id, request.system_prompt, request.message
     )
-    rag_context = await _maybe_retrieve(collection_id, request.message)
+    rag_context = await _maybe_retrieve(collection_id, request.message, client)
     memory_context = await _maybe_retrieve_memory(request.message, conversation_id)
     web_context = await _maybe_fetch_url(request.attached_url)
     search_context = await _run_search(storage, request.search_query) if request.search_query else None
@@ -835,7 +848,7 @@ async def chat_stream(
     history = await _build_message_history(
         storage, tenant_id, conversation_id, request.system_prompt, request.message
     )
-    rag_context = await _maybe_retrieve(collection_id, request.message)
+    rag_context = await _maybe_retrieve(collection_id, request.message, client)
     memory_context = await _maybe_retrieve_memory(request.message, conversation_id)
     web_context = await _maybe_fetch_url(request.attached_url)
     search_context = await _run_search(storage, request.search_query) if request.search_query else None

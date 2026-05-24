@@ -127,3 +127,28 @@ questions:
     expected_source: ephemeral-containers.md
     expected_keywords: [init, ephemeral, container, pod]
     category: boundary
+
+  # ---------- Day 24-25: hard questions (HyDE generalization spot-check) ----------
+  # Selected by MEASUREMENT: each confirmed hard for plain vector search
+  # (expected source at rank 4+ or absent from top-10), while a topic-probe
+  # confirmed the answer genuinely lives in the expected source.
+  - id: q19
+    question: "If my app writes temporary files and the pod is killed and rescheduled elsewhere, what happens to that data?"
+    expected_source: pod-lifecycle.md
+    expected_keywords: [ephemeral, storage, container, restart]
+    category: hard-vocab-mismatch
+  - id: q20
+    question: "What identity does a pod use when it calls the Kubernetes API, and how is it assigned?"
+    expected_source: service-accounts.md
+    expected_keywords: [service account, token, pod, mounted]
+    category: hard-vocab-mismatch
+  - id: q21
+    question: "How do I get a debugging shell inside a running pod whose image has no shell or debug tools?"
+    expected_source: ephemeral-containers.md
+    expected_keywords: [ephemeral, container, debug, running]
+    category: hard-niche-doc
+  - id: q22
+    question: "How can a workload ask for a GPU or other specialized hardware device?"
+    expected_source: dynamic-resource-allocation.md
+    expected_keywords: [resource, device, allocation, driver]
+    category: hard-vocab-mismatch

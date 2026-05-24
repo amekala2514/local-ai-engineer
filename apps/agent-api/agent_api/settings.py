@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     memory_score_threshold: float = Field(default=0.70)
     memory_top_k: int = Field(default=3)
     memory_fetch_k: int = Field(default=10)
+    # Day 24-25: Query transformation (retrieval). Off by default — opt-in
+    # experiments, validated via the eval harness before any default-on.
+    query_rewrite_enabled: bool = Field(default=False)
+    hyde_enabled: bool = Field(default=True)  # Day 24-25: eval-validated (77%->95% on phase-a)
+    query_transform_model: str = Field(default="llama3.1:8b")
 
     @model_validator(mode="after")
     def _resolve_relative_paths(self) -> "Settings":
