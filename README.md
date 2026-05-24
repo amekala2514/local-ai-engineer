@@ -45,7 +45,7 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Day 18b: Web search wired to chat with untrusted-content framing + strict citations
 - [x] Observability O1: per-request token + context metrics + /metrics endpoint (app-side; full OTel stack deferred to O2/O3)
 - [x] Days 20-22: Cross-conversation memory (storage, write, retrieval, injection, hardening + threat model)
-- [ ] Day 23: File generation (Markdown, PDF)
+- [x] Day 23: File generation (Markdown, PDF) — ephemeral export, both formats, MD passthrough + fpdf2 renderer
 - [ ] Days 24-25: Query rewriting / HyDE
 - [ ] Day 26: Hybrid search (vector + BM25)
 - [ ] Day 27: Eval re-baseline and reflection
