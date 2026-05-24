@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     query_rewrite_enabled: bool = Field(default=False)
     hyde_enabled: bool = Field(default=True)  # Day 24-25: eval-validated (77%->95% on phase-a)
     query_transform_model: str = Field(default="llama3.1:8b")
+    # Day 26: Hybrid search (dense + BM25 sparse, server-side RRF fusion)
+    hybrid_enabled: bool = Field(default=True)  # Day 26: eval-validated (DBSF, 0 wrong-source misses on 22)
+    hybrid_collection: str = Field(default="phase-a-hybrid")
+    bm25_idf_path: str = Field(default="data/vector/bm25_idf.json")
 
     @model_validator(mode="after")
     def _resolve_relative_paths(self) -> "Settings":
@@ -92,6 +96,9 @@ class Settings(BaseSettings):
         sqlite = Path(self.sqlite_path)
         if not sqlite.is_absolute() and ENV_FILE is not None:
             self.sqlite_path = str((ENV_FILE.parent / sqlite).resolve())
+        idf = Path(self.bm25_idf_path)
+        if not idf.is_absolute() and ENV_FILE is not None:
+            self.bm25_idf_path = str((ENV_FILE.parent / idf).resolve())
         return self
 
 

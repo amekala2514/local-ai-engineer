@@ -23,7 +23,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "apps" / "agent-api"))
 
 from agent_api.ingest.embedder import close as close_embedder  # noqa: E402
-from agent_api.ingest.qdrant_store import SearchResult, search  # noqa: E402
+from agent_api.ingest.qdrant_store import SearchResult, search, hybrid_search  # noqa: E402
 from agent_api.rag.retriever import retrieve_for_query  # noqa: E402
 from agent_api.rag.query_transform import rewrite_query, generate_hyde_doc  # noqa: E402
 from agent_api.models.ollama import OllamaClient  # noqa: E402
@@ -189,8 +189,18 @@ async def _transform(query: str, mode: str, client) -> str:
 
 
 async def run_one(q: EvalQuestion, collection: str, top_k: int, rerank: bool,
-                  transform: str = "none", client=None) -> EvalResult:
+                  transform: str = "none", client=None, hybrid: bool = False) -> EvalResult:
     query = await _transform(q.question, transform, client)
+    if hybrid:
+        # dense side uses the (optionally transformed) query; sparse side uses
+        # the original question's keywords. Runs against the hybrid collection.
+        results = hybrid_search(
+            settings.hybrid_collection,
+            dense_query_text=query,
+            sparse_query_text=q.question,
+            top_k=top_k,
+        )
+        return score_result(q, results)
     if rerank:
         ctx = await retrieve_for_query(
             query=query,
@@ -226,7 +236,8 @@ async def main_async(args) -> int:
     try:
         for q in questions:
             er = await run_one(q, collection, args.top_k, args.rerank,
-                               transform=args.transform, client=_client)
+                               transform=args.transform, client=_client,
+                               hybrid=args.hybrid)
             eval_results.append(er)
             marker = {VERDICT_HIT: "✓", VERDICT_NEAR: "~", VERDICT_MISS: "✗"}[er.verdict]
             print(f"  [{marker}] {q.id}: {er.verdict}")
@@ -241,6 +252,8 @@ async def main_async(args) -> int:
     suffix = "rerank" if args.rerank else "vector"
     if args.transform != "none":
         suffix = f"{suffix}-{args.transform}"
+    if args.hybrid:
+        suffix = f"{suffix}-hybrid"
     out_path = args.out / f"{stamp}-{suffix}.md"
     out_path.write_text(report, encoding="utf-8")
 
@@ -267,6 +280,8 @@ def main() -> int:
                         help="Use plain vector search instead of reranking")
     parser.add_argument("--transform", choices=["none", "rewrite", "hyde"], default="none",
                         help="Apply a query transform before retrieval")
+    parser.add_argument("--hybrid", action="store_true", default=False,
+                        help="Use hybrid dense+sparse retrieval (RRF fusion)")
     args = parser.parse_args()
     return asyncio.run(main_async(args))
 

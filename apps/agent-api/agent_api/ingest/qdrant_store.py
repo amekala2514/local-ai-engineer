@@ -146,3 +146,84 @@ def drop_collection(name: str) -> bool:
         return False
     c.delete_collection(collection_name=name)
     return True
+
+
+# ---------- Day 26: Hybrid search (dense + BM25 sparse, server-side RRF) ----------
+
+from functools import lru_cache as _lru_cache
+from pathlib import Path as _Path
+from agent_api.ingest.sparse import BM25Encoder as _BM25Encoder
+
+_DENSE_NAME = "dense"
+_SPARSE_NAME = "sparse"
+
+
+@_lru_cache(maxsize=1)
+def _load_bm25_encoder() -> _BM25Encoder:
+    """Load the corpus BM25 IDF once (cached). Path is CWD-anchored in settings."""
+    return _BM25Encoder.load(_Path(settings.bm25_idf_path))
+
+
+def hybrid_search(
+    collection: str,
+    dense_query_text: str,
+    sparse_query_text: str,
+    top_k: int = 5,
+    prefetch_k: int = 20,
+) -> list[SearchResult]:
+    """Hybrid retrieval: dense + BM25 sparse prefetches fused with RRF.
+
+    dense_query_text and sparse_query_text may differ on purpose: the dense
+    side can use a HyDE-transformed query (semantic), while the sparse side
+    uses the original query (lexical/keyword). Each prefetch fetches prefetch_k
+    candidates; Qdrant fuses them and returns top_k.
+
+    Fusion: DBSF (distribution-based score fusion), not RRF. RRF is rank-only,
+    so generic-keyword docs ranking high on the sparse side get equal voting
+    power and can outvote a strong dense match (this regressed q19 under RRF).
+    DBSF combines normalized SCORES, so a weak sparse signal (generic terms)
+    contributes little while a strong distinctive one (e.g. "GPU") still helps —
+    capturing the q22 rescue without the q19 regression. Eval-validated:
+    DBSF hybrid retrieved the correct source for all 22 eval questions.
+    """
+    c = _client()
+    encoder = _load_bm25_encoder()
+
+    dense_vec = embed(dense_query_text)
+    sparse_vec = encoder.encode_query(sparse_query_text)
+
+    response = c.query_points(
+        collection_name=collection,
+        prefetch=[
+            qmodels.Prefetch(
+                query=dense_vec,
+                using=_DENSE_NAME,
+                limit=prefetch_k,
+            ),
+            qmodels.Prefetch(
+                query=qmodels.SparseVector(
+                    indices=sparse_vec.indices,
+                    values=sparse_vec.values,
+                ),
+                using=_SPARSE_NAME,
+                limit=prefetch_k,
+            ),
+        ],
+        query=qmodels.FusionQuery(fusion=qmodels.Fusion.DBSF),
+        limit=top_k,
+        with_payload=True,
+    )
+    points = response.points
+    return [
+        SearchResult(
+            score=p.score,
+            text=(p.payload or {}).get("text", ""),
+            source_file=(p.payload or {}).get("source_file", ""),
+            document_title=(p.payload or {}).get("document_title", ""),
+            section_path=(p.payload or {}).get("section_path", []),
+            page_number=(p.payload or {}).get("page_number"),
+            chunk_index=(p.payload or {}).get("chunk_index", 0),
+            content_type=(p.payload or {}).get("content_type", ""),
+        )
+        for p in points
+    ]

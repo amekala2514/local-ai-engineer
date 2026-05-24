@@ -37,6 +37,7 @@ from agent_api.memory.store import search_memory, MemoryHit
 from agent_api.memory.prompt import build_memory_prompt
 from agent_api.files.generate import to_markdown, to_pdf, sanitize_filename
 from agent_api.rag.query_transform import generate_hyde_doc, rewrite_query
+from agent_api.ingest.qdrant_store import hybrid_search
 from agent_api.web.search import SearchError, search as _brave_search
 from agent_api.web.rate_limit import check_daily_limit, compute_query_hash
 from agent_api.web.validator import validate_url
@@ -318,6 +319,33 @@ async def _maybe_retrieve(
             query = await generate_hyde_doc(user_message, client)
         elif settings.query_rewrite_enabled:
             query = await rewrite_query(user_message, client)
+
+    # Hybrid retrieval (Day 26): dense + BM25 sparse fused with DBSF. The dense
+    # side uses the (HyDE-)transformed query; the sparse side uses the original
+    # message keywords. Eval-validated: 0 wrong-source misses across 22 vs a
+    # genuine miss for both HyDE-alone (q22) and dense-only. Routes to the
+    # hybrid collection only for the corpus that has a sparse-indexed twin;
+    # other collections fall back to dense. Falls back to dense on any error
+    # (non-critical: a hybrid failure must not break RAG).
+    if settings.hybrid_enabled and collection_id == "phase-a":
+        try:
+            chunks = hybrid_search(
+                settings.hybrid_collection,
+                dense_query_text=query,
+                sparse_query_text=user_message,
+                top_k=5,
+            )
+            return RetrievalContext(
+                chunks=chunks,
+                collection_id=settings.hybrid_collection,
+                query=query,
+                reason="hybrid_dbsf",
+                extra={"top_score": chunks[0].score if chunks else None,
+                       "result_count": len(chunks), "hybrid": True},
+            )
+        except Exception:
+            pass  # fall through to dense
+
     return await retrieve_for_query(
         query=query,
         collection_id=collection_id,
