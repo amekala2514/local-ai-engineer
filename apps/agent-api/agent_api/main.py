@@ -9,7 +9,7 @@ import json
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import (
     Cookie,
@@ -35,6 +35,7 @@ from agent_api.web.prompt import build_untrusted_url_prompt, build_search_result
 from agent_api.memory.writer import remember_turn_pair
 from agent_api.memory.store import search_memory, MemoryHit
 from agent_api.memory.prompt import build_memory_prompt
+from agent_api.files.generate import to_markdown, to_pdf, sanitize_filename
 from agent_api.web.search import SearchError, search as _brave_search
 from agent_api.web.rate_limit import check_daily_limit, compute_query_hash
 from agent_api.web.validator import validate_url
@@ -1207,6 +1208,40 @@ async def metrics_endpoint(
     epoch = datetime.fromtimestamp(0, tz=timezone.utc)
     aggregates = await storage.request_metrics.aggregate_since(settings.tenant_id, epoch)
     return format_prometheus(aggregates)
+
+
+# ---------- File generation ----------
+
+class FileGenerateRequest(BaseModel):
+    content: str = Field(..., max_length=100_000)
+    format: Literal["markdown", "pdf"]
+    filename: str | None = Field(default=None, max_length=120)
+
+
+@app.post("/api/files/generate")
+async def generate_file(
+    request: FileGenerateRequest,
+    _: Annotated[str, Depends(require_auth)],
+) -> Response:
+    """Generate an ephemeral downloadable file (Markdown or PDF) from content.
+
+    The content is the user's own (a chat response or requested text); it is
+    rendered and returned in-request, never stored. The filename is sanitized
+    to a safe basename to prevent path tricks in the Content-Disposition header.
+    """
+    if request.format == "markdown":
+        data = to_markdown(request.content)
+        media_type = "text/markdown; charset=utf-8"
+        fname = sanitize_filename(request.filename, "document", "md")
+    else:
+        data = to_pdf(request.content, title=request.filename or "Document")
+        media_type = "application/pdf"
+        fname = sanitize_filename(request.filename, "document", "pdf")
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 # ---------- Static UI ----------

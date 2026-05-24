@@ -343,6 +343,21 @@
       regen.textContent = 'Regenerate';
       regen.addEventListener('click', () => regenerateLast(div));
       actions.appendChild(regen);
+
+      const dlMd = document.createElement('button');
+      dlMd.type = 'button';
+      dlMd.className = 'message-action-btn';
+      dlMd.textContent = '\u2913 MD';
+      dlMd.addEventListener('click', () => downloadMessage(content, 'markdown'));
+      actions.appendChild(dlMd);
+
+      const dlPdf = document.createElement('button');
+      dlPdf.type = 'button';
+      dlPdf.className = 'message-action-btn';
+      dlPdf.textContent = '\u2913 PDF';
+      dlPdf.addEventListener('click', () => downloadMessage(content, 'pdf'));
+      actions.appendChild(dlPdf);
+
       div.appendChild(actions);
     }
 
@@ -351,6 +366,34 @@
     els.chatWindow.appendChild(div);
     maybeScrollToBottom();
     return { messageDiv: div, body };
+  }
+
+  // ---------- File download ----------
+
+  async function downloadMessage(content, format) {
+    const ext = format === 'pdf' ? 'pdf' : 'md';
+    try {
+      const res = await apiFetch('/api/files/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, format, filename: 'response' }),
+      });
+      if (!res.ok) {
+        setStatus('Download failed', 'error');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `response.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      if (e.message !== 'Not authenticated') setStatus('Download error', 'error');
+    }
   }
 
   // ---------- Regenerate ----------
@@ -876,6 +919,21 @@
             regen.textContent = 'Regenerate';
             regen.addEventListener('click', () => regenerateLast(messageDiv));
             actions.appendChild(regen);
+
+            const dlMd = document.createElement('button');
+            dlMd.type = 'button';
+            dlMd.className = 'message-action-btn';
+            dlMd.textContent = '\u2913 MD';
+            dlMd.addEventListener('click', () => downloadMessage(accumulated, 'markdown'));
+            actions.appendChild(dlMd);
+
+            const dlPdf = document.createElement('button');
+            dlPdf.type = 'button';
+            dlPdf.className = 'message-action-btn';
+            dlPdf.textContent = '\u2913 PDF';
+            dlPdf.addEventListener('click', () => downloadMessage(accumulated, 'pdf'));
+            actions.appendChild(dlPdf);
+
             messageDiv.appendChild(actions);
 
             enhanceCodeBlocks(messageBody);
