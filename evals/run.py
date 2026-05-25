@@ -51,6 +51,8 @@ class EvalResult:
     verdict: str
     matched_source_rank: int | None
     matched_keywords: list[str]
+    transform_ms: float = 0.0
+    retrieve_ms: float = 0.0
 
 
 def load_questions(path: Path) -> tuple[str, list[EvalQuestion]]:
@@ -78,14 +80,23 @@ def score_result(q: EvalQuestion, results: list[SearchResult]) -> EvalResult:
             matched_rank = i
             break
 
+    # Keyword coverage is now an INFORMATIONAL signal, not a gate. Previously
+    # "right source but few keywords" scored as near-miss (Day 24-26: q07/q09
+    # repeatedly hit this — correct doc at rank 1, but hand-authored keywords
+    # absent from the chunk). That penalized correct retrieval for a keyword-
+    # list authoring problem. We report coverage separately and never let it
+    # downgrade a source hit.
     haystack = " ".join(r.text.lower() for r in results)
     matched_keywords = [
         kw for kw in q.expected_keywords if kw.lower() in haystack
     ]
-    keyword_threshold = max(1, len(q.expected_keywords) // 2)
-    keywords_pass = len(matched_keywords) >= keyword_threshold
 
-    if matched_rank is not None and keywords_pass:
+    # Verdict is now SOURCE-based, with rank quality distinguishing hit vs near:
+    #   HIT  = right source retrieved in the top NEAR_RANK_CUTOFF
+    #   NEAR = right source retrieved but below the cutoff (found but buried)
+    #   MISS = right source not retrieved at all
+    NEAR_RANK_CUTOFF = 3
+    if matched_rank is not None and matched_rank <= NEAR_RANK_CUTOFF:
         verdict = VERDICT_HIT
     elif matched_rank is not None:
         verdict = VERDICT_NEAR
@@ -190,7 +201,15 @@ async def _transform(query: str, mode: str, client) -> str:
 
 async def run_one(q: EvalQuestion, collection: str, top_k: int, rerank: bool,
                   transform: str = "none", client=None, hybrid: bool = False) -> EvalResult:
+    import time
+    # Time the transform (a separate LLM call for HyDE/rewrite) and the
+    # retrieval independently, so the baseline shows each cost (the O2 traces
+    # showed HyDE ~3s vs retrieval ~80ms — we surface that in the eval too).
+    _t0 = time.perf_counter()
     query = await _transform(q.question, transform, client)
+    transform_ms = (time.perf_counter() - _t0) * 1000.0
+
+    _t1 = time.perf_counter()
     if hybrid:
         # dense side uses the (optionally transformed) query; sparse side uses
         # the original question's keywords. Runs against the hybrid collection.
@@ -200,8 +219,7 @@ async def run_one(q: EvalQuestion, collection: str, top_k: int, rerank: bool,
             sparse_query_text=q.question,
             top_k=top_k,
         )
-        return score_result(q, results)
-    if rerank:
+    elif rerank:
         ctx = await retrieve_for_query(
             query=query,
             collection_id=collection,
@@ -212,7 +230,12 @@ async def run_one(q: EvalQuestion, collection: str, top_k: int, rerank: bool,
         results = ctx.chunks
     else:
         results = search(collection, query, top_k=top_k)
-    return score_result(q, results)
+    retrieve_ms = (time.perf_counter() - _t1) * 1000.0
+
+    er = score_result(q, results)
+    er.transform_ms = transform_ms
+    er.retrieve_ms = retrieve_ms
+    return er
 
 
 async def main_async(args) -> int:
@@ -263,8 +286,19 @@ async def main_async(args) -> int:
     miss = sum(1 for r in eval_results if r.verdict == VERDICT_MISS)
     print()
     print(f"Hit: {hits}/{total} ({100 * hits / total:.0f}%)")
-    print(f"Near-miss: {near}/{total}")
+    print(f"Near-miss (right source, rank > 3): {near}/{total}")
     print(f"Miss: {miss}/{total}")
+    # Latency (Day 27): transform (HyDE/rewrite LLM call) vs retrieval, averaged.
+    if eval_results:
+        avg_tx = sum(r.transform_ms for r in eval_results) / len(eval_results)
+        avg_rt = sum(r.retrieve_ms for r in eval_results) / len(eval_results)
+        # Mean reciprocal rank over source hits (rank quality, not just hit/miss).
+        rr = [1.0 / r.matched_source_rank for r in eval_results if r.matched_source_rank]
+        mrr = sum(rr) / total if total else 0.0
+        avg_cov = sum(len(r.matched_keywords) for r in eval_results) / len(eval_results)
+        print(f"MRR (rank quality): {mrr:.3f}")
+        print(f"Avg transform: {avg_tx:.0f} ms | Avg retrieval: {avg_rt:.0f} ms")
+        print(f"Avg keyword coverage (informational): {avg_cov:.1f} kw")
     print()
     print(f"Report written to: {out_path}")
     return 0
