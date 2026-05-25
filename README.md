@@ -50,7 +50,7 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Day 23: File generation (Markdown, PDF) — ephemeral export, both formats, MD passthrough + fpdf2 renderer
 - [x] Days 24-25: Query rewriting / HyDE — HyDE enabled for RAG (eval-validated 77%->95%), rewrite built but off
 - [x] Day 26: Hybrid search (vector + BM25) — DBSF fusion, eval-validated (0 wrong-source misses on 22; rescued q22)
-- [ ] Day 27: Eval re-baseline and reflection
+- [x] Day 27: Eval re-baseline and reflection — source-based scoring + MRR + latency; BASELINE.md canonical (shipped HyDE+hybrid: 22/22, MRR 0.977). **Phase B complete.**
 
 ### Phase C — Agentic Assistant (planned)
 - [ ] Approval and policy engine
