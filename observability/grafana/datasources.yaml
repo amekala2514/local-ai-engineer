@@ -2,9 +2,17 @@ apiVersion: 1
 datasources:
   - name: Tempo
     type: tempo
+    uid: tempo-ds
     access: proxy
-    # Grafana (in the observability network) reaches Tempo by service name.
     url: http://tempo:3200
-    isDefault: true
+    isDefault: false
     jsonData:
       httpMethod: GET
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus-ds
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST

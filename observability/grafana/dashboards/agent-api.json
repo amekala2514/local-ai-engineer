@@ -1,0 +1,66 @@
+{
+  "uid": "agent-api-overview",
+  "title": "Agent API Overview",
+  "tags": ["agent-api", "local-ai-engineer"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "title": "Chat requests by model",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"expr": "sum by (model) (agent_chat_requests_total)", "legendFormat": "{{model}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10}}}
+    },
+    {
+      "id": 2,
+      "title": "Requests by context (RAG / memory / search)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"expr": "sum(agent_chat_requests_total{rag=\"true\"})", "legendFormat": "RAG", "refId": "A"},
+        {"expr": "sum(agent_chat_requests_total{memory=\"true\"})", "legendFormat": "memory", "refId": "B"},
+        {"expr": "sum(agent_chat_requests_total{search=\"true\"})", "legendFormat": "search", "refId": "C"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Prompt tokens by model",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"expr": "sum by (model) (agent_prompt_tokens_total)", "legendFormat": "{{model}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Completion tokens by model",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"expr": "sum by (model) (agent_completion_tokens_total)", "legendFormat": "{{model}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Avg request duration (ms) by model",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"expr": "agent_request_duration_ms_avg", "legendFormat": "{{model}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms"}}
+    }
+  ]
+}

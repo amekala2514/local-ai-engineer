@@ -1,0 +1,12 @@
+# Prometheus scrape config (O3). Scrapes the agent-api /metrics endpoint.
+# The API runs on the HOST (uvicorn), so Prometheus (in a container) reaches
+# it via host.docker.internal — same pattern open-webui uses for Ollama.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: agent-api
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+    metrics_path: /metrics
