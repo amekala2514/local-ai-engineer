@@ -53,12 +53,22 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Day 27: Eval re-baseline and reflection — source-based scoring + MRR + latency; BASELINE.md canonical (shipped HyDE+hybrid: 22/22, MRR 0.977). **Phase B complete.**
 
 ### Phase C — Agentic Assistant (planned)
-- [ ] Approval and policy engine
-- [ ] File system tools
-- [ ] Git tools
-- [ ] Guarded shell execution
-- [ ] Repo onboarding
-- [ ] Code execution sandbox
+Threat model: trusted local copilot, mistakes-primary, supervised, own code.
+Prompt-injection-via-repo-content is the one acknowledged adversarial vector
+(hardened at repo onboarding). Docker sandbox now, behind a swappable interface
+for stronger isolation (gVisor/microVM) later. Build order is safety-first:
+the policy engine + audit log (Days 28-30) ship before any tool can act, then
+tools in increasing risk order. See THREAT_MODEL.md.
+
+- [ ] Day 28: Foundation — threat-model doc + tool-agnostic intent schema (`{tool, action, resource, scope, args, cwd, env_profile, network, reversibility, risk_signals}`) + resource-sensitivity patterns (secrets / CI / deploy / .git internals)
+- [ ] Day 29: Policy engine — attribute-based evaluator returning `{decision, reasons, approval_level}` (allow / approve / deny computed from intent attributes + resource sensitivity), data-driven YAML rules, OPA-shaped, tested against a mock-intent suite (no tools attached)
+- [ ] Day 30: Audit log + rich approval object — every intent/decision/result persisted (SQLite), approval payload carries exact action, risk reasons, containment, and rollback info; threat-model version logged per decision
+- [ ] Day 31: Filesystem tools — read (auto-allow, path-jailed, secrets excluded from context) + write/edit (require-approval, backup-patch rollback)
+- [ ] Day 32: Git tools — status/diff/log (auto), commit/branch (approve, temp-branch rollback), push (deny-by-default), `reset --hard` forbidden (force revert/restore)
+- [ ] Day 33: Code execution sandbox — Docker-isolated, network-off by default, behind a swappable interface for later microVM/gVisor
+- [ ] Day 34: Guarded shell v1 — small known-workflow allowlist (tests/builds/linters) + read-only introspection auto-allowed, all else approve; structural guards (no `rm`/`mv`, no external write-redirects, no `;`-chains); runs in the Day 33 sandbox
+- [ ] Day 35: Repo onboarding (capstone) — structured repo understanding (layout, languages, entry points) composing the lower layers; prompt-injection hardening (repo file content treated as untrusted data, never as instructions)
+- [ ] Day 36: Phase C eval + reflection — decision-correctness baseline over a policy test suite (check for false-allows and excessive false-approvals); reflect and close Phase C
 
 ## Getting started
 
