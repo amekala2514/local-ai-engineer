@@ -1,5 +1,6 @@
 """SQLite storage backend."""
 
+import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -111,6 +112,25 @@ CREATE INDEX IF NOT EXISTS idx_memory_entries_tenant_conversation
     ON memory_entries(tenant_id, conversation_id);
 CREATE INDEX IF NOT EXISTS idx_memory_entries_tenant_created
     ON memory_entries(tenant_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS policy_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    threat_model_version TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    action TEXT NOT NULL,
+    resource TEXT,
+    decision TEXT NOT NULL,
+    reasons TEXT,
+    risk_signals TEXT,
+    sensitivity TEXT,
+    intent_json TEXT NOT NULL,
+    approved INTEGER,
+    execution_result TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_policy_audit_created
+    ON policy_audit(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_policy_audit_decision
+    ON policy_audit(decision, created_at DESC);
 """
 
 
@@ -467,6 +487,51 @@ class SQLiteMemoryEntryStore(MemoryEntryStore):
             return int(row[0]) if row else 0
 
 
+class SQLitePolicyAuditStore:
+    """Append-only audit trail of policy decisions (Phase C, Day 30).
+
+    One row per decision; two columns (approved, execution_result) are filled
+    later as the action progresses through its lifecycle:
+    proposed/decided -> approved -> executed.
+    """
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self._db = db
+
+    async def record_decision(self, intent, result, threat_model_version: str) -> int:
+        created_at = _now_iso()
+        cursor = await self._db.execute(
+            "INSERT INTO policy_audit "
+            "(created_at, threat_model_version, tool, action, resource, decision, "
+            " reasons, risk_signals, sensitivity, intent_json, approved, execution_result) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
+            (
+                created_at, threat_model_version,
+                intent.tool.value, intent.action.value, intent.resource,
+                result.decision.value,
+                json.dumps(list(result.reasons)),
+                json.dumps([s.value for s in result.risk_signals]),
+                result.sensitivity.value,
+                intent.model_dump_json(),
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def mark_approved(self, audit_id: int, approved: bool) -> None:
+        await self._db.execute(
+            "UPDATE policy_audit SET approved = ? WHERE id = ?",
+            (1 if approved else 0, audit_id),
+        )
+        await self._db.commit()
+
+    async def record_execution(self, audit_id: int, execution_result: str) -> None:
+        await self._db.execute(
+            "UPDATE policy_audit SET execution_result = ? WHERE id = ?",
+            (execution_result, audit_id),
+        )
+        await self._db.commit()
+
+
 class SQLiteStorage(Storage):
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
@@ -488,6 +553,7 @@ class SQLiteStorage(Storage):
         self.search_queries = SQLiteSearchQueryStore(self._db)
         self.request_metrics = SQLiteRequestMetricsStore(self._db)
         self.memory_entries = SQLiteMemoryEntryStore(self._db)
+        self.policy_audit = SQLitePolicyAuditStore(self._db)
 
     async def _migrate_request_metrics_memory_used(self) -> None:
         """Add memory_used to request_metrics if absent (idempotent migration).

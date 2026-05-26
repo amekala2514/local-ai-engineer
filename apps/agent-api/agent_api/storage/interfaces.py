@@ -223,12 +223,34 @@ class MemoryEntryStore(ABC):
         raise NotImplementedError
 
 
+class PolicyAuditStore(ABC):
+    """Append-only audit trail of Phase C policy decisions. One row per
+    decision; approved + execution_result are filled as the action progresses
+    (proposed -> approved -> executed). Intent is stored as JSON for forensics.
+    """
+    @abstractmethod
+    async def record_decision(self, intent, result, threat_model_version: str) -> int:
+        """Log a decision; return the audit row id."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def mark_approved(self, audit_id: int, approved: bool) -> None:
+        """Record the human's approve/reject for an approval-required action."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def record_execution(self, audit_id: int, execution_result: str) -> None:
+        """Record the outcome once the tool actually runs (Day 31+)."""
+        raise NotImplementedError
+
+
 class Storage(ABC):
     conversations: ConversationStore
     messages: MessageStore
     search_queries: SearchQueryStore
     request_metrics: RequestMetricsStore
     memory_entries: MemoryEntryStore
+    policy_audit: PolicyAuditStore
 
     @abstractmethod
     async def initialize(self) -> None:
