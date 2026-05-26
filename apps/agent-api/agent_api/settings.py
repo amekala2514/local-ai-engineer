@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     hybrid_collection: str = Field(default="phase-a-hybrid")
     bm25_idf_path: str = Field(default="data/vector/bm25_idf.json")
     # O2: Tracing (OpenTelemetry -> Tempo). Off by default; safe-degrade if Tempo down.
+    # Phase C: the project root that filesystem/shell tools are jailed to.
+    # Resources resolving outside this are flagged outside_repo (deny on write).
+    project_root: str = Field(default=".")
     tracing_enabled: bool = Field(default=False)  # O2: opt-in (TRACING_ENABLED=true). On-by-default taxes requests ~2s when Tempo is down.
     otlp_traces_endpoint: str = Field(default="http://localhost:4318/v1/traces")
 
@@ -102,6 +105,9 @@ class Settings(BaseSettings):
         idf = Path(self.bm25_idf_path)
         if not idf.is_absolute() and ENV_FILE is not None:
             self.bm25_idf_path = str((ENV_FILE.parent / idf).resolve())
+        root = Path(self.project_root)
+        if not root.is_absolute() and ENV_FILE is not None:
+            self.project_root = str((ENV_FILE.parent / root).resolve())
         return self
 
 
