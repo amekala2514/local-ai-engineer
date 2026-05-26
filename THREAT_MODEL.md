@@ -325,6 +325,51 @@ CSP. This risk is bounded by CSP, by the lack of sensitive cookies
 accessible to JavaScript (HTTP-only), and by the local-only
 deployment assumption.
 
+### T11: Destructive or unauthorized actions via agentic tools (Phase C)
+
+**Threat model version: phase-c-v1** (logged with every policy decision; bump
+this string when the assumptions below change).
+
+Phase C gives the assistant the ability to take actions — read/write files, run
+git operations, execute shell commands and code. The risk shifts from "a wrong
+answer" to "a destructive or irreversible action" (deleted file, bad force
+push, `rm -rf` with a wrong variable, a secret read into context and leaked).
+
+**Assumptions (what this design defends against):**
+- Trusted local copilot, single operator (you), on your own repositories,
+  under active supervision — not running detached/unattended.
+- The PRIMARY threat is the assistant making a MISTAKE, not an external
+  adversary weaponizing it.
+- ONE acknowledged adversarial vector: prompt injection via repo content —
+  files the assistant reads during repo onboarding (Day 35) may contain
+  injected instructions. Repo file content is treated as untrusted DATA, never
+  as instructions (hardened at Day 35).
+
+**Controls:**
+- A centralized pre-execution policy engine (no tool takes a side effect
+  without an allow decision). Tools declare a structured Intent; the engine
+  decides allow / require-approval / deny from the intent's attributes and the
+  target resource's sensitivity.
+- Resource sensitivity: SECRET-class paths (`.env`, keys, tokens) are
+  write-denied AND excluded from the model's context window (it cannot leak
+  what it cannot see); CONFIG-class paths (CI/deploy, `.git` internals) are
+  readable as context but write-denied.
+- Conservative defaults: all mutations require explicit human approval; a deny
+  list (force push, `rm -rf`, `reset --hard`, secret writes) is refused even
+  when asked; auto-allow is limited to read-only/reversible operations.
+- Containment: risky execution runs in a Docker sandbox, network-off by
+  default, behind a swappable interface so stronger isolation (gVisor/microVM)
+  can replace Docker without rewriting tools — the path to harden if the
+  trusted-operator assumption ever changes.
+- Audit: every intent, decision (with reasons), and result is logged with the
+  threat-model version in force at the time.
+
+**What this does NOT yet defend against (deferred — see revisiting triggers):**
+- Pointing the assistant at untrusted public repos or running unvetted external
+  code: this design assumes you vet what it operates on. That assumption aging
+  out is a trigger to weight microVM-class isolation and stricter onboarding.
+- Detached/unsupervised operation.
+
 ## Threats explicitly out of scope
 
 ### Not protected against
