@@ -60,7 +60,7 @@ for stronger isolation (gVisor/microVM) later. Build order is safety-first:
 the policy engine + audit log (Days 28-30) ship before any tool can act, then
 tools in increasing risk order. See THREAT_MODEL.md.
 
-- [ ] Day 28: Foundation — threat-model doc + tool-agnostic intent schema (`{tool, action, resource, scope, args, cwd, env_profile, network, reversibility, risk_signals}`) + resource-sensitivity patterns (secrets / CI / deploy / .git internals)
+- [x] Day 28: Foundation — threat-model T11 (phase-c-v1), tool-agnostic Intent schema, resource-sensitivity data (secret/config/normal). Contracts only; no logic yet.
 - [ ] Day 29: Policy engine — attribute-based evaluator returning `{decision, reasons, approval_level}` (allow / approve / deny computed from intent attributes + resource sensitivity), data-driven YAML rules, OPA-shaped, tested against a mock-intent suite (no tools attached)
 - [ ] Day 30: Audit log + rich approval object — every intent/decision/result persisted (SQLite), approval payload carries exact action, risk reasons, containment, and rollback info; threat-model version logged per decision
 - [ ] Day 31: Filesystem tools — read (auto-allow, path-jailed, secrets excluded from context) + write/edit (require-approval, backup-patch rollback)
