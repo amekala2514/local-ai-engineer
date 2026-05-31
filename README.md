@@ -52,7 +52,7 @@ To reduce reliance on cloud AI services (Claude, OpenAI, Perplexity) for routine
 - [x] Day 26: Hybrid search (vector + BM25) — DBSF fusion, eval-validated (0 wrong-source misses on 22; rescued q22)
 - [x] Day 27: Eval re-baseline and reflection — source-based scoring + MRR + latency; BASELINE.md canonical (shipped HyDE+hybrid: 22/22, MRR 0.977). **Phase B complete.**
 
-### Phase C — Agentic Assistant (planned)
+### Phase C — Agentic Assistant (complete)
 Threat model: trusted local copilot, mistakes-primary, supervised, own code.
 Prompt-injection-via-repo-content is the one acknowledged adversarial vector
 (hardened at repo onboarding). Docker sandbox now, behind a swappable interface
@@ -68,7 +68,7 @@ tools in increasing risk order. See THREAT_MODEL.md.
 - [x] Day 33: Docker sandbox — Sandbox protocol (swappable) + DockerSandbox (python:3.12-slim pinned, network-off, RO host mount, non-root, capped memory/CPU/time/output). Seven empirical containment proofs PASS — host writes blocked, network blocked.
 - [x] Day 34: Guarded shell v1 — three layers (allowlist + gate + sandbox) composing. Real commands run contained; non-allowlisted/chained/destructive refused. Fixed a multi_command false positive (;-in-code); Day 29 suite re-verified 15/15.
 - [x] Day 35: Repo onboarding (capstone) — composes lower layers into structured repo understanding; secrets never read; repo content framed as untrusted data (mirrors web T3). Injection test passes; gate is the real backstop. Framing documented as mitigation not guarantee.
-- [ ] Day 36: Phase C eval + reflection — decision-correctness baseline over a policy test suite (check for false-allows and excessive false-approvals); reflect and close Phase C
+- [x] Day 36: Phase C eval + reflection — 23/23 decision-correctness, ZERO false-allows (evals/POLICY_BASELINE.md). Reflection in PHASE_C.md. Phase C complete.
 
 ## Getting started
 
