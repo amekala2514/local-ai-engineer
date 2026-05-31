@@ -74,7 +74,16 @@ def classify(intent: Intent) -> tuple[Sensitivity, list[RiskSignal]]:
     joined = " ".join(intent.args).lower()
     if any(frag.lower() in joined for frag in _DESTRUCTIVE_FRAGMENTS):
         signals.append(RiskSignal.DESTRUCTIVE_FLAG)
-    if any(tok in joined for tok in _MULTI_CMD_TOKENS):
+    # multi_command: flag only when a shell separator appears as its OWN argv
+    # element (a real chain like ['ls', ';', 'rm']), NOT when it's a character
+    # inside a single element (e.g. the ';' in `python -c "import x; y"`, which
+    # is legitimate code, not a shell chain). A separator hidden inside one
+    # string element is left to the sandbox to contain — the allowlist + the
+    # network-off, host-read-only sandbox are the hard guarantees; this signal
+    # catches the obvious token-separated chain. (Day 34: fixed a false positive
+    # where ';' inside `-c` code tripped this.)
+    _SEPARATOR_TOKENS = {";", "&&", "||", "|", "&"}
+    if any(arg.strip() in _SEPARATOR_TOKENS for arg in intent.args):
         signals.append(RiskSignal.MULTI_COMMAND)
 
     # Git push to a remote = remote write; force push is also destructive.
