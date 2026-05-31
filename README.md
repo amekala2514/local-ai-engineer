@@ -100,3 +100,18 @@ Web search is powered by the [Brave Search API](https://brave.com/search/api/).
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+## Phase D — Agent Loop & Tool Integration (planned)
+Provider-agnostic agent loop letting the model call the Phase C tools in
+conversation, gated by the policy engine, MCP-ready by design. Built
+small-target-first, harness-before-UI, local-before-external. Key invariants:
+the loop/gate/tools speak canonical types only (provider-agnostic); every
+tool-call (local OR MCP) becomes an Intent through the gate (the gate trusts
+neither the model nor the tool source); the ToolRegistry seam exists from the
+start so MCP is an addition, not a rewrite.
+- [ ] Day 37: Canonical seam + agent loop + read-only local tools (harness) — agent/ package: canonical tool types, ModelProvider protocol (Ollama first), ToolRegistry (local now, MCP-ready), map_tool_call_to_intent bridge to the gate, the loop. Auto-allow tools only; proven in a CLI harness.
+- [ ] Day 38: Approval interrupt/resume (harness) — loop pauses on `approve`, surfaces the payload, resumes on yes; filesystem write as first approve-required tool.
+- [ ] Day 39: UI wiring — tool calls + approval payloads in the chat UI; capture approve/reject.
+- [ ] Day 40: All local tools + polish — commit/branch/shell through the flow, audit visibility, error handling.
+- [ ] Day 41: MCP client integration — connect one MCP server (stdio), expose its tools via ToolRegistry, prove every MCP tool-call passes the gate, frame MCP tool descriptions as untrusted (Day 35 pattern).
+- [ ] Day 42 (optional): App as an MCP server — wrap Phase C tools as an MCP server, gate still enforcing.
