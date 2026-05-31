@@ -67,7 +67,7 @@ tools in increasing risk order. See THREAT_MODEL.md.
 - [x] Day 32: Git tools — status/diff/log (auto), commit two-phase with real tag-based rollback (verified by resetting a real commit), branch (approve), push (deny). Verified on actual repo with strict cleanup.
 - [x] Day 33: Docker sandbox — Sandbox protocol (swappable) + DockerSandbox (python:3.12-slim pinned, network-off, RO host mount, non-root, capped memory/CPU/time/output). Seven empirical containment proofs PASS — host writes blocked, network blocked.
 - [x] Day 34: Guarded shell v1 — three layers (allowlist + gate + sandbox) composing. Real commands run contained; non-allowlisted/chained/destructive refused. Fixed a multi_command false positive (;-in-code); Day 29 suite re-verified 15/15.
-- [ ] Day 35: Repo onboarding (capstone) — structured repo understanding (layout, languages, entry points) composing the lower layers; prompt-injection hardening (repo file content treated as untrusted data, never as instructions)
+- [x] Day 35: Repo onboarding (capstone) — composes lower layers into structured repo understanding; secrets never read; repo content framed as untrusted data (mirrors web T3). Injection test passes; gate is the real backstop. Framing documented as mitigation not guarantee.
 - [ ] Day 36: Phase C eval + reflection — decision-correctness baseline over a policy test suite (check for false-allows and excessive false-approvals); reflect and close Phase C
 
 ## Getting started
