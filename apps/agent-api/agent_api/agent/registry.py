@@ -30,7 +30,10 @@ Executor = Callable[[ToolCall, Any], Awaitable[ToolCallResult]]
 @dataclass(frozen=True)
 class RegisteredTool:
     descriptor: ToolDescriptor
-    executor: Executor
+    executor: Executor | None = None          # single-phase: execute(call, store)
+    two_phase: bool = False                    # if True, use propose/confirm below
+    proposer: ProposeFn | None = None          # propose(call, store) -> (ToolResult-like)
+    confirmer: ConfirmFn | None = None         # confirm(audit_id, approved, store)
 
 
 def _from_phasec(call: ToolCall, tr) -> ToolCallResult:
@@ -61,6 +64,25 @@ class ToolRegistry:
             return ToolCallResult(call_id=call.call_id, name=call.name,
                                   content=f"unknown tool: {call.name}", ok=False, decision="error")
         return await tool.executor(call, audit_store)
+
+    def is_two_phase(self, name: str) -> bool:
+        t = self._tools.get(name)
+        return bool(t and t.two_phase)
+
+    async def propose(self, call: ToolCall, audit_store):
+        """For a two-phase tool: gate + stage, returning the Phase C ToolResult
+        (which carries decision + approval + audit_id). Executes nothing."""
+        tool = self._tools.get(call.name)
+        if tool is None or not tool.two_phase or tool.proposer is None:
+            return None
+        return await tool.proposer(call, audit_store)
+
+    async def confirm(self, name: str, audit_id: int, approved: bool, audit_store):
+        """For a two-phase tool: execute (or discard) the staged action."""
+        tool = self._tools.get(name)
+        if tool is None or not tool.two_phase or tool.confirmer is None:
+            return None
+        return await tool.confirmer(audit_id, approved, audit_store)
 
 
 # ---- executor wrappers (adapt each Phase C tool's specific signature) ----
@@ -120,6 +142,15 @@ async def _ex_onboard(call: ToolCall, store) -> ToolCallResult:
                               ok=False, decision="error")
 
 
+async def _propose_write(call: ToolCall, store):
+    """propose_write gates and stages; returns the Phase C ToolResult."""
+    return await fs.propose_write(call.args.get("path", ""), call.args.get("content", ""), store)
+
+
+async def _confirm_write(audit_id: int, approved: bool, store):
+    return await fs.confirm_write(audit_id, approved, store)
+
+
 def build_default_registry() -> ToolRegistry:
     """Registry with the D37 read-only local tools (all auto-allow / self-gating)."""
     reg = ToolRegistry()
@@ -149,4 +180,11 @@ def build_default_registry() -> ToolRegistry:
         ToolDescriptor("onboard", "Summarize the repository structure: tree, languages, entry points, key files. Secrets are skipped.",
             {"type":"object","properties":{"subpath":{"type":"string","description":"sub-path to onboard (default repo root)"}}}),
         _ex_onboard))
+    reg.register(RegisteredTool(
+        descriptor=ToolDescriptor("write_file",
+            "Write (create or overwrite) a text file in the repository. Requires human approval; the original is backed up first.",
+            {"type":"object","required":["path","content"],
+             "properties":{"path":{"type":"string","description":"file path relative to repo root"},
+                           "content":{"type":"string","description":"the full new file content"}}}),
+        two_phase=True, proposer=_propose_write, confirmer=_confirm_write))
     return reg
