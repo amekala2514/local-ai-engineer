@@ -66,7 +66,7 @@ async def status(audit_store) -> ToolResult:
 
 async def diff(path: str | None, audit_store) -> ToolResult:
     """git diff [path]. Auto-allowed."""
-    intent = Intent(tool=Tool.GIT, action=Action.GIT_STATUS,
+    intent = Intent(tool=Tool.GIT, action=Action.GIT_DIFF,
                     resource=path, args=["diff"])
     gr = await gate(intent, audit_store)
     if gr.decision is not Decision.ALLOW:
@@ -86,7 +86,7 @@ async def diff(path: str | None, audit_store) -> ToolResult:
 
 async def log(n: int, audit_store) -> ToolResult:
     """git log --oneline -n N. Auto-allowed."""
-    intent = Intent(tool=Tool.GIT, action=Action.GIT_STATUS, args=["log"])
+    intent = Intent(tool=Tool.GIT, action=Action.GIT_LOG, args=["log"])
     gr = await gate(intent, audit_store)
     if gr.decision is not Decision.ALLOW:
         await audit_store.record_execution(gr.audit_id, f"refused:{gr.decision.value}")

@@ -35,7 +35,9 @@ class Action(StrEnum):
     WRITE_FILE = "write_file"
     LIST_DIR = "list_dir"
     # git
-    GIT_STATUS = "git_status"      # status / diff / log — read-only
+    GIT_STATUS = "git_status"      # status — read-only
+    GIT_DIFF = "git_diff"          # diff — read-only
+    GIT_LOG = "git_log"            # log — read-only
     GIT_COMMIT = "git_commit"
     GIT_BRANCH = "git_branch"      # create / checkout
     GIT_PUSH = "git_push"

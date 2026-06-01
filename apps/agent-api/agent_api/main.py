@@ -58,6 +58,9 @@ from agent_api.settings import ENV_FILE, settings
 from agent_api.storage.backends.sqlite import SQLiteStorage
 from agent_api.storage.factory import make_storage
 from agent_api.storage.interfaces import Storage
+from agent_api.agent.provider import OllamaProvider
+from agent_api.agent.registry import build_default_registry
+from agent_api.agent.loop import run_agent, resume_from_pending
 
 
 SESSION_COOKIE_NAME = "session"
@@ -1313,6 +1316,94 @@ async def generate_file(
 
 
 # ---------- Static UI ----------
+
+from uuid import uuid4 as _uuid4
+
+
+class AgentRunRequest(BaseModel):
+    message: str
+    conversation_id: str | None = None
+    model: str | None = None
+
+
+class AgentApprovalView(BaseModel):
+    action_summary: str
+    exact_payload: str
+    risk_reasons: list[str]
+    containment: str
+    rollback: str
+
+
+class AgentRunReply(BaseModel):
+    type: Literal["answer", "pending_approval"]
+    text: str | None = None
+    pause_id: str | None = None
+    approval: AgentApprovalView | None = None
+    tool_name: str | None = None
+
+
+class AgentApproveRequest(BaseModel):
+    pause_id: str
+    approved: bool
+
+
+def _approval_view(a) -> AgentApprovalView:
+    return AgentApprovalView(
+        action_summary=a.action_summary, exact_payload=a.exact_payload,
+        risk_reasons=a.risk_reasons, containment=a.containment, rollback=a.rollback,
+    )
+
+
+async def _persist_pause_and_reply(storage, pending, conversation_id) -> "AgentRunReply":
+    pause_id = _uuid4().hex
+    await storage.pending_approvals.create(
+        pause_id=pause_id, audit_id=pending.audit_id, tool_name=pending.tool_name,
+        call_id=pending.call_id,
+        write_path=pending.tool_args.get("path"),
+        write_content=pending.tool_args.get("content"),
+        messages=pending.messages, turns_used=pending.turns_used,
+        max_turns=pending.max_turns, conversation_id=conversation_id,
+    )
+    return AgentRunReply(type="pending_approval", pause_id=pause_id,
+                         approval=_approval_view(pending.approval),
+                         tool_name=pending.tool_name)
+
+
+@app.post("/api/agent/run", response_model=AgentRunReply)
+async def agent_run(
+    request: AgentRunRequest,
+    _: Annotated[str, Depends(require_auth)],
+    storage: Annotated[Storage, Depends(get_storage)],
+) -> AgentRunReply:
+    provider = OllamaProvider(model=request.model or settings.model_general,
+                              host=settings.ollama_host)
+    registry = build_default_registry()
+    run = await run_agent(request.message, provider, registry, storage.policy_audit)
+    if run.is_paused:
+        return await _persist_pause_and_reply(storage, run.pending, request.conversation_id)
+    return AgentRunReply(type="answer", text=run.answer)
+
+
+@app.post("/api/agent/approve", response_model=AgentRunReply)
+async def agent_approve(
+    request: AgentApproveRequest,
+    _: Annotated[str, Depends(require_auth)],
+    storage: Annotated[Storage, Depends(get_storage)],
+) -> AgentRunReply:
+    row = await storage.pending_approvals.get(request.pause_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown pause_id")
+    if row["status"] != "pending":
+        raise HTTPException(status_code=409, detail=f"pause already {row['status']}")
+    await storage.pending_approvals.mark(
+        request.pause_id, "approved" if request.approved else "rejected")
+    provider = OllamaProvider(model=settings.model_general, host=settings.ollama_host)
+    registry = build_default_registry()
+    run = await resume_from_pending(row, request.approved, provider, registry, storage.policy_audit)
+    if run.is_paused:
+        return await _persist_pause_and_reply(storage, run.pending, row.get("conversation_id"))
+    return AgentRunReply(type="answer", text=run.answer)
+
 
 if ENV_FILE is not None:
     _frontend_dir = ENV_FILE.parent / "apps" / "frontend"

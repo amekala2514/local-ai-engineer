@@ -48,6 +48,7 @@ class PendingApproval:
     audit_id: int
     tool_name: str
     call_id: str
+    tool_args: dict[str, Any]        # the staged call's args (e.g. write path+content)
     messages: list[dict[str, Any]]   # conversation state to resume from
     turns_used: int                  # budget already consumed
     max_turns: int
@@ -134,7 +135,7 @@ async def _drive(
                 run.turns.append(turn)
                 run.pending = PendingApproval(
                     approval=tr.approval, audit_id=tr.audit_id, tool_name=call.name,
-                    call_id=call.call_id, messages=messages,
+                    call_id=call.call_id, tool_args=dict(call.args), messages=messages,
                     turns_used=turns_used, max_turns=max_turns,
                 )
                 return run
@@ -191,3 +192,47 @@ async def resume_agent(
         f"{'approved and executed' if approved else 'rejected by human'}: {content}"))
     return await _drive(pending.messages, provider, registry, audit_store,
                         pending.max_turns, pending.turns_used, run)
+
+
+async def resume_from_pending(
+    row: dict,
+    approved: bool,
+    provider: ModelProvider,
+    registry: ToolRegistry,
+    audit_store,
+) -> AgentRun:
+    """Durable HTTP resume (D39): continue a paused loop loaded from the
+    pending_approvals store. Unlike resume_agent (in-memory PendingApproval),
+    this reconstructs from persisted state and confirms the write from the
+    stored (path, content) via confirm_write_explicit — so it works across
+    requests / restarts with no in-process dependency.
+
+    Currently specialized to write_file (the one approve-required tool in D39);
+    extends as more two-phase tools are wired (D40).
+    """
+    from agent_api.tools.filesystem import confirm_write_explicit
+
+    tool_name = row["tool_name"]
+    audit_id = row["audit_id"]
+    call_id = row["call_id"]
+    messages = row["messages"]
+
+    if tool_name == "write_file":
+        tr = await confirm_write_explicit(
+            audit_id, approved, row["write_path"] or "", row["write_content"] or "",
+            audit_store,
+        )
+    else:
+        # Fallback to the registry's confirm for any future two-phase tool.
+        tr = await registry.confirm(tool_name, audit_id, approved, audit_store)
+
+    content = tr.detail if tr is not None else "tool unavailable"
+    result = ToolCallResult(call_id, tool_name, content,
+                            bool(tr and tr.ok), (tr.decision if tr else "error"), audit_id)
+    run = AgentRun()
+    run.turns.append(AgentTurn(results=[result]))
+    messages.append(_tool_result_msg(
+        ToolCall(call_id=call_id, name=tool_name, args={}),
+        f"{'approved and executed' if approved else 'rejected by human'}: {content}"))
+    return await _drive(messages, provider, registry, audit_store,
+                        row["max_turns"], row["turns_used"], run)

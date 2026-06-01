@@ -48,7 +48,7 @@ def _has(sig: RiskSignal):
     return lambda i, s, sigs: sig in sigs
 
 # Read-only actions that are always safe.
-_READ_ONLY_ACTIONS = {Action.READ_FILE, Action.LIST_DIR, Action.GIT_STATUS}
+_READ_ONLY_ACTIONS = {Action.READ_FILE, Action.LIST_DIR, Action.GIT_STATUS, Action.GIT_DIFF, Action.GIT_LOG}
 
 _DENY_RULES = [
     (lambda i, s, sigs: RiskSignal.SECRET_ADJACENT in sigs and i.action not in _READ_ONLY_ACTIONS,

@@ -137,3 +137,30 @@ async def confirm_write(audit_id: int, approved: bool, audit_store) -> ToolResul
     except Exception as e:
         await audit_store.record_execution(audit_id, f"error:{type(e).__name__}")
         return ToolResult(False, "approve", f"write error: {type(e).__name__}: {e}", audit_id=audit_id)
+
+
+async def confirm_write_explicit(audit_id: int, approved: bool, path: str,
+                                 content: str, audit_store) -> ToolResult:
+    """Like confirm_write, but takes the (path, content) EXPLICITLY instead of
+    reading the in-process _PENDING dict. Used by the durable HTTP resume path
+    (D39) so a write survives across requests / server restarts. The harness
+    path still uses confirm_write (in-process)."""
+    await audit_store.mark_approved(audit_id, approved)
+    if not approved:
+        await audit_store.record_execution(audit_id, "rejected_by_human")
+        return ToolResult(False, "approve", "write rejected by human", audit_id=audit_id)
+    try:
+        full = (_root() / path).resolve()
+        backup_note = "no_prior_file"
+        if full.exists():
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+            backup = _backup_dir() / f"{full.name}.{ts}.bak"
+            shutil.copy2(full, backup)
+            backup_note = f"backup:{backup.name}"
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+        await audit_store.record_execution(audit_id, f"write_ok:{len(content)}_chars:{backup_note}")
+        return ToolResult(True, "approve", f"wrote {len(content)} chars ({backup_note})", audit_id=audit_id)
+    except Exception as e:
+        await audit_store.record_execution(audit_id, f"error:{type(e).__name__}")
+        return ToolResult(False, "approve", f"write error: {type(e).__name__}: {e}", audit_id=audit_id)

@@ -131,6 +131,22 @@ CREATE INDEX IF NOT EXISTS idx_policy_audit_created
     ON policy_audit(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_policy_audit_decision
     ON policy_audit(decision, created_at DESC);
+CREATE TABLE IF NOT EXISTS pending_approvals (
+    pause_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    audit_id INTEGER NOT NULL,
+    tool_name TEXT NOT NULL,
+    call_id TEXT NOT NULL,
+    write_path TEXT,
+    write_content TEXT,
+    messages_json TEXT NOT NULL,
+    turns_used INTEGER NOT NULL,
+    max_turns INTEGER NOT NULL,
+    conversation_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pending_approvals_status
+    ON pending_approvals(status, created_at DESC);
 """
 
 
@@ -532,6 +548,51 @@ class SQLitePolicyAuditStore:
         await self._db.commit()
 
 
+class SQLitePendingApprovalStore:
+    """Durable pause-state for the agent loop (D39). One row = one paused loop,
+    resumable across HTTP requests AND server restarts. Holds the loop messages
+    AND the pending write payload, so resume depends on no in-process state."""
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self._db = db
+
+    async def create(self, *, pause_id: str, audit_id: int, tool_name: str,
+                     call_id: str, write_path, write_content, messages: list,
+                     turns_used: int, max_turns: int, conversation_id=None) -> None:
+        await self._db.execute(
+            "INSERT INTO pending_approvals "
+            "(pause_id, created_at, status, audit_id, tool_name, call_id, "
+            " write_path, write_content, messages_json, turns_used, max_turns, conversation_id) "
+            "VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (pause_id, _now_iso(), audit_id, tool_name, call_id,
+             write_path, write_content, json.dumps(messages), turns_used,
+             max_turns, conversation_id),
+        )
+        await self._db.commit()
+
+    async def get(self, pause_id: str) -> dict | None:
+        async with self._db.execute(
+            "SELECT pause_id, status, audit_id, tool_name, call_id, write_path, "
+            "write_content, messages_json, turns_used, max_turns, conversation_id "
+            "FROM pending_approvals WHERE pause_id = ?", (pause_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "pause_id": row[0], "status": row[1], "audit_id": row[2],
+            "tool_name": row[3], "call_id": row[4], "write_path": row[5],
+            "write_content": row[6], "messages": json.loads(row[7]),
+            "turns_used": row[8], "max_turns": row[9], "conversation_id": row[10],
+        }
+
+    async def mark(self, pause_id: str, status: str) -> None:
+        await self._db.execute(
+            "UPDATE pending_approvals SET status = ? WHERE pause_id = ?",
+            (status, pause_id),
+        )
+        await self._db.commit()
+
+
 class SQLiteStorage(Storage):
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
@@ -554,6 +615,7 @@ class SQLiteStorage(Storage):
         self.request_metrics = SQLiteRequestMetricsStore(self._db)
         self.memory_entries = SQLiteMemoryEntryStore(self._db)
         self.policy_audit = SQLitePolicyAuditStore(self._db)
+        self.pending_approvals = SQLitePendingApprovalStore(self._db)
 
     async def _migrate_request_metrics_memory_used(self) -> None:
         """Add memory_used to request_metrics if absent (idempotent migration).

@@ -18,8 +18,8 @@ _TOOL_ACTION = {
     "read_file":  (Tool.FILESYSTEM, Action.READ_FILE),
     "list_dir":   (Tool.FILESYSTEM, Action.LIST_DIR),
     "git_status": (Tool.GIT, Action.GIT_STATUS),
-    "git_diff":   (Tool.GIT, Action.GIT_STATUS),
-    "git_log":    (Tool.GIT, Action.GIT_STATUS),
+    "git_diff":   (Tool.GIT, Action.GIT_DIFF),
+    "git_log":    (Tool.GIT, Action.GIT_LOG),
 }
 
 

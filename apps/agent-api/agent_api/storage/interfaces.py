@@ -244,6 +244,24 @@ class PolicyAuditStore(ABC):
         raise NotImplementedError
 
 
+class PendingApprovalStore(ABC):
+    """Durable pause-state for the agent loop (D39): one row per paused loop,
+    resumable across HTTP requests and restarts."""
+    @abstractmethod
+    async def create(self, *, pause_id: str, audit_id: int, tool_name: str,
+                     call_id: str, write_path, write_content, messages: list,
+                     turns_used: int, max_turns: int, conversation_id=None) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get(self, pause_id: str) -> dict | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def mark(self, pause_id: str, status: str) -> None:
+        raise NotImplementedError
+
+
 class Storage(ABC):
     conversations: ConversationStore
     messages: MessageStore
@@ -251,6 +269,7 @@ class Storage(ABC):
     request_metrics: RequestMetricsStore
     memory_entries: MemoryEntryStore
     policy_audit: PolicyAuditStore
+    pending_approvals: PendingApprovalStore
 
     @abstractmethod
     async def initialize(self) -> None:
