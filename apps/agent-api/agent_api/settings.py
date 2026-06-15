@@ -8,7 +8,7 @@ Manager / GCP Secret Manager via the runtime's environment.
 import os
 from pathlib import Path
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,7 +44,10 @@ class Settings(BaseSettings):
     agent_api_port: int = Field(default=8000)
     agent_api_host: str = Field(default="0.0.0.0")
     tenant_id: str = Field(default="local")
-    ollama_host: str = Field(default="http://localhost:11434")
+    ollama_host: str = Field(
+        default="http://localhost:11434",
+        validation_alias=AliasChoices("AGENT_OLLAMA_HOST", "OLLAMA_BASE_URL"),
+    )
     storage_backend: str = Field(default="sqlite")
     sqlite_path: str = Field(default="./data/agent.sqlite")
     vector_backend: str = Field(default="qdrant_local")

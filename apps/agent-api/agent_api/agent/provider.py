@@ -70,7 +70,21 @@ def _try_parse_content_toolcall(content: str) -> dict[str, Any] | None:
 class OllamaProvider(ModelProvider):
     def __init__(self, model: str = "llama3.1:8b", host: str | None = None) -> None:
         self._model = model
-        self._host = host or "http://127.0.0.1:11434"
+        self._host = self._normalize_host(host)
+
+    @staticmethod
+    def _normalize_host(host: str | None) -> str:
+        """Make a connectable base URL from a possibly-bare/bind-address host.
+        Handles: None -> default; missing scheme -> prepend http://; 0.0.0.0
+        (a bind address, not connectable) -> 127.0.0.1."""
+        h = (host or "").strip()
+        if not h:
+            return "http://127.0.0.1:11434"
+        if "://" not in h:
+            h = "http://" + h
+        # 0.0.0.0 means "all interfaces" for a listener; connect via loopback.
+        h = h.replace("://0.0.0.0", "://127.0.0.1")
+        return h.rstrip("/")
 
     async def chat(
         self,
